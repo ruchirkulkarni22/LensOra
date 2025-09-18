@@ -1,7 +1,7 @@
 # File: backend/workflows/activities.py
 from temporalio import activity
 from jira.exceptions import JIRAError
-from backend.workflows.shared import TextBundle, LLMVerdict
+from backend.workflows.shared import TicketContext, LLMVerdict
 
 @activity.defn
 class ValidationActivities:
@@ -16,8 +16,8 @@ class ValidationActivities:
         self.llm_service = llm_service
 
     @activity.defn
-    async def fetch_and_bundle_ticket_text_activity(self, ticket_key: str) -> TextBundle:
-        activity.logger.info(f"Fetching details for ticket: {ticket_key}")
+    async def fetch_and_bundle_ticket_context_activity(self, ticket_key: str) -> TicketContext:
+        activity.logger.info(f"Fetching context for ticket: {ticket_key}")
         details = self.jira_service.get_ticket_details(ticket_key)
         
         text_parts = [
@@ -26,26 +26,38 @@ class ValidationActivities:
             f"Description: {details.get('description', '')}"
         ]
         
-        for attachment in details.get("attachments", []):
+        image_bytes_list = []
+        for attachment in details.get("image_attachments", []):
+            activity.logger.info(f"Downloading image attachment: {attachment['filename']}")
+            image_bytes = self.jira_service.download_attachment(attachment['url'])
+            image_bytes_list.append(image_bytes)
+
+        for attachment in details.get("other_attachments", []):
+            activity.logger.info(f"Processing non-image attachment: {attachment['filename']}")
             content_bytes = self.jira_service.download_attachment(attachment['url'])
             extracted_text = self.ocr_service.extract_text_from_bytes(content_bytes, attachment['mimeType'])
             text_parts.append(f"\n--- Attachment: {attachment['filename']} ---\n{extracted_text}")
 
-        return TextBundle(
+        return TicketContext(
             bundled_text="\n".join(text_parts), 
-            reporter_id=details.get('reporter_id') # Can be None if no reporter
+            reporter_id=details.get('reporter_id'),
+            image_attachments=image_bytes_list
         )
 
     @activity.defn
-    async def get_llm_verdict_activity(self, text_bundle: TextBundle) -> LLMVerdict:
-        activity.logger.info("Fetching module knowledge and sending to LLM...")
+    async def get_llm_verdict_activity(self, ticket_context: TicketContext) -> LLMVerdict:
+        activity.logger.info("Fetching module knowledge and sending context to LLM...")
         module_knowledge = self.db_service.get_all_modules_with_fields()
         
         verdict_dict = self.llm_service.get_validation_verdict(
-            ticket_text_bundle=text_bundle.bundled_text,
-            module_knowledge=module_knowledge
+            ticket_text_bundle=ticket_context.bundled_text,
+            module_knowledge=module_knowledge,
+            image_attachments=ticket_context.image_attachments
         )
         
+        # --- FLAWLESS FIX (SIDE 1) ---
+        # We ensure this activity ALWAYS returns the correct dataclass object, not a dict.
+        # This is the first line of defense against data type errors.
         return LLMVerdict(
             detected_module=verdict_dict.get("detected_module", "Unknown"),
             validation_status=verdict_dict.get("validation_status", "error"),
@@ -64,15 +76,12 @@ class ValidationActivities:
             f"Thank you,\nLensOraAI Agent"
         )
         
-        # --- FLAWLESS FIX ---
-        # Implement the resilient fallback logic you designed.
         if not reporter_id:
             activity.logger.warning(f"No reporter found for ticket {ticket_key}. Adding comment only.")
             self.jira_service.add_comment(ticket_key, message)
             return f"Ticket {ticket_key} commented on successfully (no reassignment)."
 
         try:
-            # Attempt the full comment and reassign operation.
             self.jira_service.comment_and_reassign(
                 ticket_key=ticket_key,
                 comment=message,
@@ -80,9 +89,7 @@ class ValidationActivities:
             )
             return f"Ticket {ticket_key} commented on and reassigned to reporter."
         except JIRAError as e:
-            # If the reassignment fails, log the error and fall back to commenting.
-            activity.logger.error(f"Failed to reassign ticket {ticket_key} to {reporter_id}. Error: {e}. Falling back to comment only.")
-            # We don't need to call add_comment here because the first step of 
-            # comment_and_reassign already posted the comment before it failed.
+            activity.logger.error(f"Failed to reassign ticket {ticket_key}, falling back to comment-only. Error: {e}")
+            self.jira_service.add_comment(ticket_key, message)
             return f"Ticket {ticket_key} commented on, but reassignment failed."
 

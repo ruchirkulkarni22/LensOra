@@ -23,14 +23,22 @@ class JiraService:
         Fetches the summary, description, reporter, and attachments of a JIRA ticket.
         """
         issue = self.client.issue(ticket_key)
-        attachments = [
-            {
+        
+        # --- FLAWLESS UPGRADE ---
+        # We now separate image attachments from other file types so the
+        # multimodal LLM can process them correctly.
+        image_attachments = []
+        other_attachments = []
+        for attachment in issue.fields.attachment:
+            attachment_details = {
                 "filename": attachment.filename,
                 "url": attachment.content,
                 "mimeType": attachment.mimeType
             }
-            for attachment in issue.fields.attachment
-        ]
+            if 'image' in attachment.mimeType:
+                image_attachments.append(attachment_details)
+            else:
+                other_attachments.append(attachment_details)
         
         reporter_id = None
         if hasattr(issue.fields.reporter, 'accountId'):
@@ -40,7 +48,8 @@ class JiraService:
             "summary": issue.fields.summary,
             "description": issue.fields.description,
             "reporter_id": reporter_id,
-            "attachments": attachments
+            "image_attachments": image_attachments,
+            "other_attachments": other_attachments
         }
 
     def download_attachment(self, url: str) -> bytes:
@@ -66,28 +75,13 @@ class JiraService:
         """
         Adds a comment and then robustly reassigns the ticket using a direct API call.
         """
-        # First, add the comment, which is more likely to succeed.
         self.client.add_comment(ticket_key, comment)
-        
-        # --- FLAWLESS FIX ---
-        # We bypass the problematic jira-python 'assign_issue' function and use a
-        # direct REST API call, which is the guaranteed way to assign by accountId.
-        
-        # JIRA's API endpoint for changing the assignee
         assign_url = f"{self.client._options['server']}/rest/api/2/issue/{ticket_key}/assignee"
-        
-        # The required payload format for assigning by accountId
         payload = json.dumps({"accountId": assignee_id})
-        
-        # Get the authenticated session from the jira-python client
         session = self.client._session
-        
         headers = {"Content-Type": "application/json"}
-
         print(f"Attempting to reassign {ticket_key} to {assignee_id} via direct API call.")
         response = session.put(assign_url, data=payload, headers=headers)
-        
-        # If the request was not successful, raise an error that our activity can catch.
         response.raise_for_status()
 
 jira_service = JiraService()

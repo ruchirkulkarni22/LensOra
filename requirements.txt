@@ -1,7 +1,6 @@
 # Core Frameworks
 fastapi
 uvicorn[standard]
-
 # FLAWLESS FIX: Specify a modern version to ensure all features are available
 temporalio
 
@@ -16,10 +15,10 @@ sentence-transformers
 pytesseract
 PyMuPDF
 Pillow
+python-docx
 
 # APIs & Services
 requests
 python-dotenv
-
 # FLAWLESS FIX: Added for JIRA integration
 jira

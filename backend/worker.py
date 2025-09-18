@@ -6,7 +6,7 @@ from temporalio.worker import Worker
 from backend.config import settings
 from backend.workflows.validate_ticket import ValidateTicketWorkflow
 
-# Import the correct class name from activities
+# Import the activities class
 from backend.workflows.activities import ValidationActivities
 
 
@@ -18,17 +18,17 @@ async def main():
     )
     print("Temporal client connected.")
 
-    # Instantiate the ValidationActivities class.
-    # The service imports happen here, safely outside the workflow sandbox.
     activities_instance = ValidationActivities()
 
+    # --- FLAWLESS FIX ---
+    # The worker now registers the activity by its new, correct name:
+    # 'fetch_and_bundle_ticket_context_activity'
     worker = Worker(
         client,
         task_queue="lensora-task-queue",
         workflows=[ValidateTicketWorkflow],
-        # Pass the methods from the instantiated class to the worker.
         activities=[
-            activities_instance.fetch_and_bundle_ticket_text_activity,
+            activities_instance.fetch_and_bundle_ticket_context_activity,
             activities_instance.get_llm_verdict_activity,
             activities_instance.comment_and_reassign_activity,
         ],
@@ -39,3 +39,4 @@ async def main():
 if __name__ == "__main__":
     print("Starting Temporal worker...")
     asyncio.run(main())
+
