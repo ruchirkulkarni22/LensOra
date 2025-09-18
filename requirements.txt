@@ -1,0 +1,25 @@
+# Core Frameworks
+fastapi
+uvicorn[standard]
+
+# FLAWLESS FIX: Specify a modern version to ensure all features are available
+temporalio
+
+# Database
+sqlalchemy
+psycopg2-binary
+alembic
+pgvector
+
+# NLP & OCR
+sentence-transformers
+pytesseract
+PyMuPDF
+Pillow
+
+# APIs & Services
+requests
+python-dotenv
+
+# FLAWLESS FIX: Added for JIRA integration
+jira
