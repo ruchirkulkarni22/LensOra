@@ -1,7 +1,8 @@
 # File: backend/db/models.py
-from sqlalchemy import Column, Integer, String, ForeignKey, Float, JSON, DateTime
-from sqlalchemy.sql import func
+from sqlalchemy import Column, Integer, String, ForeignKey, Text, JSON
 from sqlalchemy.orm import relationship, declarative_base
+# --- FEATURE 2.2 ENHANCEMENT ---
+from pgvector.sqlalchemy import Vector
 
 Base = declarative_base()
 
@@ -17,30 +18,29 @@ class MandatoryFieldTemplates(Base):
     id = Column(Integer, primary_key=True, index=True)
     module_id = Column(Integer, ForeignKey("modules_taxonomy.id"), nullable=False)
     field_name = Column(String, nullable=False)
-    module = relationship("ModulesTaxonomy", back_populates="mandatory_fields")
+    module = relationship("ModulesTaxonomy", back_populates="module")
 
-class JiraTickets(Base):
-    __tablename__ = "jira_tickets"
+# --- FEATURE 2.2 ENHANCEMENT ---
+# New table to store the knowledge from previously solved JIRA tickets.
+# This will be our internal RAG knowledge base.
+class SolvedJiraTickets(Base):
+    __tablename__ = "solved_jira_tickets"
     id = Column(Integer, primary_key=True, index=True)
     ticket_key = Column(String, unique=True, index=True, nullable=False)
-    summary = Column(String)
-    description = Column(String)
+    summary = Column(Text)
+    description = Column(Text)
+    resolution = Column(Text)
+    # The embedding is a 384-dimensional vector generated from the ticket's text.
+    embedding = Column(Vector(384))
 
-class ValidationLog(Base):
+
+class ValidationsLog(Base):
     __tablename__ = "validations_log"
     id = Column(Integer, primary_key=True, index=True)
     ticket_key = Column(String, index=True, nullable=False)
-    module = Column(String, nullable=True)
-    status = Column(String, nullable=False) # e.g., 'complete', 'incomplete'
-    missing_fields = Column(JSON, nullable=True) # Stored as a JSON object/array
-    confidence = Column(Float, nullable=True)
-    llm_provider_model = Column(String, nullable=True, default="gemini-1.5-flash")
-    validated_at = Column(DateTime(timezone=True), server_default=func.now())
-
-class ActionsLog(Base):
-    __tablename__ = "actions_log"
-    id = Column(Integer, primary_key=True, index=True)
-    ticket_key = Column(String, index=True, nullable=False)
-    action_type = Column(String, nullable=False) # e.g., 'comment', 'reassign'
-    details = Column(String)
+    module = Column(String)
+    status = Column(String)
+    missing_fields = Column(JSON)
+    confidence = Column(String)
+    llm_provider_model = Column(String)
 

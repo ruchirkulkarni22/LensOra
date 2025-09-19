@@ -4,7 +4,7 @@ services:
     image: temporalio/auto-setup:1.21.3
     ports:
       - "7233:7233" # For the worker/client
-      - "8088:8088" # For the Web UI
+      - "8089:8089" # For the Web UI
     environment:
       - "DB=postgresql"
       - "DB_PORT=5432"

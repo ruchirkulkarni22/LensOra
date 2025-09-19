@@ -1,0 +1,4 @@
+ticket_key,summary,description,resolution
+LENS-1,"Cannot login to Oracle ERP","User is unable to login to the Oracle ERP system after password reset.","Checked user account status in OIM. Account was locked. Unlocked the account and advised user to try again. User confirmed login was successful."
+LENS-2,"Invoice approval workflow stuck","The invoice INV-2025-123 is stuck pending manager approval, but the manager is on leave.","Used the 'Force Advance Workflow' tool in the Oracle backend to move the invoice to the next approval stage. Notified the finance team."
+LENS-3,"Error running 'Create Accounting' process","The 'Create Accounting' concurrent process is failing with error ORA-01400.","The subledger accounting (SLA) rules for a new transaction type were not defined. Defined the rules in the SLA module and resubmitted the process. It completed successfully."
