@@ -34,11 +34,13 @@ class ValidateTicketWorkflow:
         else:
             llm_verdict = llm_verdict_raw
         
-        # --- FEATURE 1.1 ENHANCEMENT ---
-        # The logic for the fallback based on confidence will be added here in a future step.
-        # For now, we are just logging the confidence score.
         workflow.logger.info(f"LLM Verdict received with confidence: {llm_verdict.confidence}")
 
+        await workflow.execute_activity(
+            "log_validation_result_activity",
+            args=[input_data.ticket_key, llm_verdict],
+            start_to_close_timeout=timedelta(minutes=1)
+        )
 
         if llm_verdict.validation_status == "incomplete":
             workflow.logger.info(f"Verdict for {input_data.ticket_key}: INCOMPLETE. Missing: {llm_verdict.missing_fields}")
@@ -50,7 +52,6 @@ class ValidateTicketWorkflow:
                 )
                 return f"Workflow complete. Status: Incomplete. {result_message}"
             else:
-                # The activity will fall back to commenting only.
                 result_message = await workflow.execute_activity(
                     "comment_and_reassign_activity",
                     args=[input_data.ticket_key, llm_verdict, None],
@@ -65,3 +66,4 @@ class ValidateTicketWorkflow:
         else:
             workflow.logger.error(f"LLM returned an error status for {input_data.ticket_key}.")
             return f"Workflow failed. Reason: LLM processing error."
+

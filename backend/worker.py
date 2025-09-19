@@ -5,8 +5,6 @@ from temporalio.worker import Worker
 
 from backend.config import settings
 from backend.workflows.validate_ticket import ValidateTicketWorkflow
-
-# Import the activities class
 from backend.workflows.activities import ValidationActivities
 
 
@@ -20,9 +18,6 @@ async def main():
 
     activities_instance = ValidationActivities()
 
-    # --- FLAWLESS FIX ---
-    # The worker now registers the activity by its new, correct name:
-    # 'fetch_and_bundle_ticket_context_activity'
     worker = Worker(
         client,
         task_queue="lensora-task-queue",
@@ -31,6 +26,7 @@ async def main():
             activities_instance.fetch_and_bundle_ticket_context_activity,
             activities_instance.get_llm_verdict_activity,
             activities_instance.comment_and_reassign_activity,
+            activities_instance.log_validation_result_activity,
         ],
     )
     print("Temporal worker started. Waiting for tasks...")

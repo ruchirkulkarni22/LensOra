@@ -27,16 +27,18 @@ class ValidationActivities:
         ]
         
         image_bytes_list = []
-        for attachment in details.get("image_attachments", []):
-            activity.logger.info(f"Downloading image attachment: {attachment['filename']}")
-            image_bytes = self.jira_service.download_attachment(attachment['url'])
-            image_bytes_list.append(image_bytes)
+        if details.get("image_attachments"):
+            for attachment in details["image_attachments"]:
+                activity.logger.info(f"Downloading image attachment: {attachment['filename']}")
+                image_bytes = self.jira_service.download_attachment(attachment['url'])
+                image_bytes_list.append(image_bytes)
 
-        for attachment in details.get("other_attachments", []):
-            activity.logger.info(f"Processing non-image attachment: {attachment['filename']}")
-            content_bytes = self.jira_service.download_attachment(attachment['url'])
-            extracted_text = self.ocr_service.extract_text_from_bytes(content_bytes, attachment['mimeType'])
-            text_parts.append(f"\n--- Attachment: {attachment['filename']} ---\n{extracted_text}")
+        if details.get("other_attachments"):
+            for attachment in details["other_attachments"]:
+                activity.logger.info(f"Processing non-image attachment: {attachment['filename']}")
+                content_bytes = self.jira_service.download_attachment(attachment['url'])
+                extracted_text = self.ocr_service.extract_text_from_bytes(content_bytes, attachment['mimeType'])
+                text_parts.append(f"\n--- Attachment: {attachment['filename']} ---\n{extracted_text}")
 
         return TicketContext(
             bundled_text="\n".join(text_parts), 
@@ -55,8 +57,6 @@ class ValidationActivities:
             image_attachments=ticket_context.image_attachments
         )
         
-        # --- FEATURE 1.1 ENHANCEMENT ---
-        # Now creating the LLMVerdict dataclass with the new 'module' and 'confidence' fields.
         return LLMVerdict(
             module=verdict_dict.get("module", "Unknown"),
             validation_status=verdict_dict.get("validation_status", "error"),
@@ -65,10 +65,15 @@ class ValidationActivities:
         )
 
     @activity.defn
+    async def log_validation_result_activity(self, ticket_key: str, verdict: LLMVerdict) -> None:
+        """Logs the final validation verdict to the database."""
+        activity.logger.info(f"Logging validation verdict for ticket {ticket_key}...")
+        self.db_service.log_validation_verdict(ticket_key, verdict)
+        activity.logger.info("Logging complete.")
+
+    @activity.defn
     async def comment_and_reassign_activity(self, ticket_key: str, verdict: LLMVerdict, reporter_id: str) -> str:
         missing_fields_str = ", ".join(verdict.missing_fields or [])
-        # --- FEATURE 1.1 ENHANCEMENT ---
-        # Using verdict.module instead of verdict.detected_module in the comment.
         message = (
             f"Hello,\n\n"
             f"This ticket, identified for the '{verdict.module}' process, is currently incomplete. "
@@ -94,3 +99,4 @@ class ValidationActivities:
             activity.logger.error(f"Failed to reassign ticket {ticket_key}, falling back to comment-only. Error: {e}")
             self.jira_service.add_comment(ticket_key, message)
             return f"Ticket {ticket_key} commented on, but reassignment failed."
+
