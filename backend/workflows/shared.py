@@ -1,6 +1,6 @@
 # File: backend/workflows/shared.py
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 @dataclass
 class TicketValidationInput:
@@ -24,7 +24,16 @@ class LLMVerdict:
     validation_status: str # 'complete' or 'incomplete'
     missing_fields: List[str] = field(default_factory=list)
     confidence: float = 0.0
-    # --- FEATURE 1.1.3 ENHANCEMENT ---
-    # This field will store the name of the model that successfully returned a verdict.
-    llm_provider_model: Optional[str] = None
+    llm_provider_model: str = "unknown"
+
+# --- FLAWLESS FIX ---
+# We now pass only serializable strings to the child workflow, avoiding the byte serialization issue.
+@dataclass
+class ResolutionInput:
+    ticket_key: str
+    ticket_bundled_text: str
+
+@dataclass
+class SynthesizedSolution:
+    solution_text: str
 

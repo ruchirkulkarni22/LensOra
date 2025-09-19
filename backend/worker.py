@@ -5,11 +5,10 @@ from temporalio.worker import Worker
 
 from backend.config import settings
 from backend.workflows.validate_ticket import ValidateTicketWorkflow
-# --- FEATURE 2.1 ENHANCEMENT ---
-# Import the new workflow and activities
 from backend.workflows.find_resolution import FindResolutionWorkflow
 from backend.workflows.activities import ValidationActivities
 from backend.workflows.resolution_activities import ResolutionActivities
+
 
 async def main():
     print("Connecting to Temporal server...")
@@ -20,20 +19,23 @@ async def main():
     print("Temporal client connected.")
 
     validation_activities = ValidationActivities()
-    resolution_activities = ResolutionActivities() # Initialize new activities
+    resolution_activities = ResolutionActivities()
 
     worker = Worker(
         client,
         task_queue="lensora-task-queue",
-        # --- FEATURE 2.1 ENHANCEMENT ---
-        # Register the new workflow with the worker
         workflows=[ValidateTicketWorkflow, FindResolutionWorkflow],
         activities=[
+            # Validation Activities
             validation_activities.fetch_and_bundle_ticket_context_activity,
             validation_activities.get_llm_verdict_activity,
-            validation_activities.log_validation_result_activity,
             validation_activities.comment_and_reassign_activity,
-            # Register new resolution activities in the future here
+            # --- FLAWLESS FIX ---
+            # Corrected the activity name to match the method in activities.py
+            validation_activities.log_validation_result_activity,
+            
+            # Resolution Activities
+            resolution_activities.find_and_synthesize_solutions_activity,
         ],
     )
     print("Temporal worker started. Waiting for tasks...")

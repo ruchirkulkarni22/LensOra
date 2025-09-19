@@ -1,21 +1,62 @@
 # File: backend/services/rag_service.py
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select, text
 from sentence_transformers import SentenceTransformer
 import pandas as pd
 from .db_service import db_service
 from backend.db.models import SolvedJiraTickets
+from typing import List, Dict
 
 class RAGService:
     """
     Handles Retrieval-Augmented Generation tasks, including processing,
-    embedding, and storing knowledge from solved JIRA tickets.
+    embedding, storing, and retrieving knowledge from solved JIRA tickets.
     """
     def __init__(self):
-        # Load a powerful, lightweight model for generating sentence embeddings.
-        # The first time this runs, it will download the model.
         print("Loading sentence embedding model...")
         self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
         print("Sentence embedding model loaded.")
+
+    # --- FEATURE 2.3 ENHANCEMENT ---
+    # New method to find the most relevant past solutions.
+    def find_similar_solutions(self, query_text: str, top_k: int = 3) -> List[Dict]:
+        """
+        Generates an embedding for the query text and finds the 'top_k' most
+        similar tickets from the database using vector similarity search.
+        """
+        db = db_service.SessionLocal()
+        try:
+            print(f"Generating embedding for query: '{query_text[:100]}...'")
+            query_embedding = self.embedding_model.encode(query_text)
+
+            # pgvector provides the L2 distance operator (<->) for similarity search.
+            # We find the tickets with the smallest distance to our query embedding.
+            stmt = (
+                select(
+                    SolvedJiraTickets.ticket_key,
+                    SolvedJiraTickets.summary,
+                    SolvedJiraTickets.resolution,
+                    SolvedJiraTickets.embedding.l2_distance(query_embedding).label('distance')
+                )
+                .order_by(text('distance'))
+                .limit(top_k)
+            )
+
+            results = db.execute(stmt).fetchall()
+            
+            similar_tickets = [
+                {
+                    "ticket_key": row.ticket_key,
+                    "summary": row.summary,
+                    "resolution": row.resolution,
+                    "distance": row.distance
+                } for row in results
+            ]
+            print(f"Found {len(similar_tickets)} similar tickets in the database.")
+            return similar_tickets
+
+        finally:
+            db.close()
 
     def upsert_solved_tickets(self, df: pd.DataFrame) -> dict:
         """
@@ -26,9 +67,7 @@ class RAGService:
         try:
             tickets_to_upsert = []
             
-            # Prepare all tickets for processing
             for _, row in df.iterrows():
-                # Combine the most important text fields for a rich embedding
                 combined_text = (
                     f"Ticket: {row['ticket_key']}\n"
                     f"Summary: {row['summary']}\n"
@@ -41,27 +80,23 @@ class RAGService:
                     "summary": row['summary'],
                     "description": row.get('description'),
                     "resolution": row['resolution'],
-                    "text_for_embedding": combined_text # Temporary field
+                    "text_for_embedding": combined_text
                 }
                 tickets_to_upsert.append(ticket_data)
 
             if not tickets_to_upsert:
                 return {"rows_upserted": 0, "errors": []}
 
-            # Generate embeddings in a single, efficient batch
             texts = [ticket['text_for_embedding'] for ticket in tickets_to_upsert]
             print(f"Generating embeddings for {len(texts)} tickets...")
             embeddings = self.embedding_model.encode(texts, show_progress_bar=True)
             
-            # Add embeddings to our ticket data
             for i, ticket in enumerate(tickets_to_upsert):
                 ticket['embedding'] = embeddings[i]
-                del ticket['text_for_embedding'] # Clean up temporary field
+                del ticket['text_for_embedding']
 
-            # Perform a bulk "upsert" operation
             stmt = insert(SolvedJiraTickets).values(tickets_to_upsert)
             
-            # On conflict (ticket_key already exists), update the existing record
             update_stmt = stmt.on_conflict_do_update(
                 index_elements=['ticket_key'],
                 set_={
@@ -85,3 +120,4 @@ class RAGService:
             db.close()
 
 rag_service = RAGService()
+

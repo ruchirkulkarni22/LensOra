@@ -2,10 +2,12 @@
 from temporalio import activity
 from jira.exceptions import JIRAError
 from backend.workflows.shared import TicketContext, LLMVerdict
+import json
 
 @activity.defn
 class ValidationActivities:
     def __init__(self):
+        # Lazy imports to avoid circular dependencies and speed up worker start
         from backend.services.jira_client import jira_service
         from backend.services.ocr_service import ocr_service
         from backend.services.db_service import db_service
@@ -27,18 +29,16 @@ class ValidationActivities:
         ]
         
         image_bytes_list = []
-        if details.get("image_attachments"):
-            for attachment in details["image_attachments"]:
-                activity.logger.info(f"Downloading image attachment: {attachment['filename']}")
-                image_bytes = self.jira_service.download_attachment(attachment['url'])
-                image_bytes_list.append(image_bytes)
+        for attachment in details.get("image_attachments", []):
+            activity.logger.info(f"Downloading image attachment: {attachment['filename']}")
+            image_bytes = self.jira_service.download_attachment(attachment['url'])
+            image_bytes_list.append(image_bytes)
 
-        if details.get("other_attachments"):
-            for attachment in details["other_attachments"]:
-                activity.logger.info(f"Processing non-image attachment: {attachment['filename']}")
-                content_bytes = self.jira_service.download_attachment(attachment['url'])
-                extracted_text = self.ocr_service.extract_text_from_bytes(content_bytes, attachment['mimeType'])
-                text_parts.append(f"\n--- Attachment: {attachment['filename']} ---\n{extracted_text}")
+        for attachment in details.get("other_attachments", []):
+            activity.logger.info(f"Processing non-image attachment: {attachment['filename']}")
+            content_bytes = self.jira_service.download_attachment(attachment['url'])
+            extracted_text = self.ocr_service.extract_text_from_bytes(content_bytes, attachment['mimeType'])
+            text_parts.append(f"\n--- Attachment: {attachment['filename']} ---\n{extracted_text}")
 
         return TicketContext(
             bundled_text="\n".join(text_parts), 
@@ -48,10 +48,9 @@ class ValidationActivities:
 
     @activity.defn
     async def get_llm_verdict_activity(self, ticket_context: TicketContext) -> LLMVerdict:
-        activity.logger.info("Fetching module knowledge and sending context to LLM with fallback...")
+        activity.logger.info("Fetching module knowledge and sending context to LLM...")
         module_knowledge = self.db_service.get_all_modules_with_fields()
         
-        # This now calls the robust, new method in our service
         verdict_dict = self.llm_service.get_validation_verdict(
             ticket_text_bundle=ticket_context.bundled_text,
             module_knowledge=module_knowledge,
@@ -63,18 +62,24 @@ class ValidationActivities:
             validation_status=verdict_dict.get("validation_status", "error"),
             missing_fields=verdict_dict.get("missing_fields", []),
             confidence=verdict_dict.get("confidence", 0.0),
-            # --- FEATURE 1.1.3 ENHANCEMENT ---
-            # Pass the successful model's name from the service to the workflow.
-            llm_provider_model=verdict_dict.get("llm_provider_model")
+            llm_provider_model=verdict_dict.get("llm_provider_model", "unknown")
         )
 
     @activity.defn
-    async def log_validation_result_activity(self, ticket_key: str, verdict: LLMVerdict) -> None:
-        """Logs the final validation verdict to the database."""
-        activity.logger.info(f"Logging validation verdict for ticket {ticket_key} from model {verdict.llm_provider_model}...")
-        # The db_service will now correctly log the model that was used.
-        self.db_service.log_validation_verdict(ticket_key, verdict)
-        activity.logger.info("Logging complete.")
+    async def log_validation_result_activity(self, ticket_key: str, verdict: LLMVerdict) -> str:
+        activity.logger.info(f"Logging validation verdict for {ticket_key}...")
+        try:
+            # --- FLAWLESS FIX ---
+            # Corrected the method name from log_validation_verdict to log_validation_result
+            self.db_service.log_validation_result(ticket_key, verdict)
+            message = f"Successfully logged validation verdict for {ticket_key} using model {verdict.llm_provider_model}."
+            activity.logger.info(message)
+            return message
+        except Exception as e:
+            error_message = f"Failed to log validation verdict for {ticket_key}. Error: {e}"
+            activity.logger.error(error_message)
+            # We will not raise the exception to avoid failing the whole workflow
+            return error_message
 
     @activity.defn
     async def comment_and_reassign_activity(self, ticket_key: str, verdict: LLMVerdict, reporter_id: str) -> str:
