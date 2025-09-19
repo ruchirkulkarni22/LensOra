@@ -2,8 +2,12 @@
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, joinedload
 from backend.config import settings
-from backend.db.models import ModulesTaxonomy, ValidationLog
+# --- FEATURE 1.1.4 ENHANCEMENT ---
+# Import MandatoryFieldTemplates for the upsert logic
+from backend.db.models import ModulesTaxonomy, MandatoryFieldTemplates, ValidationLog
 from backend.workflows.shared import LLMVerdict
+import pandas as pd
+from typing import Dict, Any
 
 class DatabaseService:
     """
@@ -12,6 +16,67 @@ class DatabaseService:
     def __init__(self):
         self.engine = create_engine(settings.DATABASE_URL)
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+
+    def upsert_module_knowledge(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Upserts module and mandatory field knowledge from a DataFrame into the database.
+        It updates existing entries or creates new ones.
+        """
+        db = self.SessionLocal()
+        upserted_count = 0
+        errors = []
+        try:
+            for index, row in df.iterrows():
+                try:
+                    module_name = row['module_name']
+                    field_name = row['field_name']
+                    
+                    # Find or create the module
+                    stmt = select(ModulesTaxonomy).where(ModulesTaxonomy.module_name == module_name)
+                    module = db.execute(stmt).scalars().first()
+                    if not module:
+                        print(f"Creating new module: {module_name}")
+                        module = ModulesTaxonomy(module_name=module_name, description=f"{module_name} process")
+                        db.add(module)
+                        db.flush() # Flush to get the new module ID
+                    
+                    # Find or create the mandatory field for that module
+                    stmt_field = select(MandatoryFieldTemplates).where(
+                        MandatoryFieldTemplates.module_id == module.id,
+                        MandatoryFieldTemplates.field_name == field_name
+                    )
+                    field = db.execute(stmt_field).scalars().first()
+                    
+                    if not field:
+                        print(f"Creating new field '{field_name}' for module '{module_name}'")
+                        new_field = MandatoryFieldTemplates(module_id=module.id, field_name=field_name)
+                        db.add(new_field)
+                        upserted_count += 1
+                    else:
+                        print(f"Field '{field_name}' for module '{module_name}' already exists. Skipping.")
+
+                except KeyError as e:
+                    error_msg = f"Row {index + 2}: Missing required column: {e}"
+                    errors.append(error_msg)
+                    print(error_msg)
+                    # Skip this row and continue with others
+                    continue
+            
+            if not errors:
+                db.commit()
+                print("Knowledge base update committed successfully.")
+            else:
+                db.rollback()
+                print("Rolling back due to errors.")
+            
+            return {"rows_upserted": upserted_count, "errors": errors}
+
+        except Exception as e:
+            db.rollback()
+            print(f"A critical error occurred during upsert: {e}")
+            return {"rows_upserted": 0, "errors": [str(e)]}
+        finally:
+            db.close()
 
     def log_validation_verdict(self, ticket_key: str, verdict: LLMVerdict):
         """
@@ -25,8 +90,6 @@ class DatabaseService:
                 status=verdict.validation_status,
                 missing_fields=verdict.missing_fields,
                 confidence=verdict.confidence,
-                # --- FEATURE 1.1.3 ENHANCEMENT ---
-                # This is now dynamic, taken directly from the verdict object.
                 llm_provider_model=verdict.llm_provider_model
             )
             db.add(log_entry)

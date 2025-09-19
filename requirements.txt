@@ -24,3 +24,6 @@ python-dotenv
 jira
 google-generativeai
 openai
+pandas
+openpyxl
+python-multipart
