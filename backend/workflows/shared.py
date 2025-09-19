@@ -26,14 +26,15 @@ class LLMVerdict:
     confidence: float = 0.0
     llm_provider_model: str = "unknown"
 
-# --- FLAWLESS FIX ---
-# We now pass only serializable strings to the child workflow, avoiding the byte serialization issue.
 @dataclass
 class ResolutionInput:
     ticket_key: str
     ticket_bundled_text: str
 
+# --- FINAL FEATURE ---
+# Add the model used to the solution dataclass for logging.
 @dataclass
 class SynthesizedSolution:
     solution_text: str
+    llm_provider_model: str
 

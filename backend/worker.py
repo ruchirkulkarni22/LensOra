@@ -30,12 +30,14 @@ async def main():
             validation_activities.fetch_and_bundle_ticket_context_activity,
             validation_activities.get_llm_verdict_activity,
             validation_activities.comment_and_reassign_activity,
-            # --- FLAWLESS FIX ---
-            # Corrected the activity name to match the method in activities.py
             validation_activities.log_validation_result_activity,
             
             # Resolution Activities
             resolution_activities.find_and_synthesize_solutions_activity,
+            # --- FINAL FEATURE ---
+            # Register the new notification and logging activities.
+            resolution_activities.post_solution_to_jira_activity,
+            resolution_activities.log_resolution_activity,
         ],
     )
     print("Temporal worker started. Waiting for tasks...")

@@ -3,7 +3,7 @@ import google.generativeai as genai
 from openai import OpenAI
 import json
 from backend.config import settings
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 class LLMService:
     """
@@ -33,7 +33,6 @@ class LLMService:
             response = client.generate_content(content_parts)
             return response.text
         elif "gpt" in model_name:
-            # For OpenAI, we must format the content into the messages API structure
             messages = [{"role": "user", "content": [part if isinstance(part, str) else {"type": "image_url", "image_url": {"url": f"data:{part['mime_type']};base64,{part['data'].hex()}"}} for part in content_parts]}]
             response = client.chat.completions.create(model=model_name, messages=messages)
             return response.choices[0].message.content
@@ -45,7 +44,6 @@ class LLMService:
         if image_attachments:
             print(f"Adding {len(image_attachments)} image(s) to the LLM prompt.")
             for image_bytes in image_attachments:
-                # Assuming PNG, adjust if other types are common
                 content_parts.append({"mime_type": "image/png", "data": image_bytes})
         
         last_error = None
@@ -53,7 +51,6 @@ class LLMService:
             try:
                 print(f"--- Attempting validation with model: {model_name} ---")
                 client = self._get_client(model_name)
-                
                 raw_response = self._make_api_call(client, model_name, content_parts)
                 cleaned_response = raw_response.strip().replace("```json", "").replace("```", "")
                 
@@ -62,7 +59,7 @@ class LLMService:
                 print("-------------------------")
 
                 verdict = json.loads(cleaned_response)
-                verdict['llm_provider_model'] = model_name # Add model info to the verdict
+                verdict['llm_provider_model'] = model_name
                 print(f"✅ Success with model: {model_name}")
                 return verdict
             except Exception as e:
@@ -70,37 +67,33 @@ class LLMService:
                 print(f"❌ API call failed for model {model_name}. Error: {e}")
                 continue
         
-        # If all models in the chain fail
         return {
             "module": "Unknown", "validation_status": "error", "missing_fields": [],
             "confidence": 0.0, "llm_provider_model": "all_failed",
             "error_message": f"All LLM providers failed. Last error: {str(last_error)}"
         }
 
-    # --- FEATURE 2.3 ENHANCEMENT ---
-    # New method to synthesize found solutions into a final recommendation.
-    def synthesize_solutions(self, ticket_context: str, ranked_solutions: List[Dict]) -> str:
+    # --- FINAL FEATURE ---
+    # Now returns a tuple: the synthesized text AND the model that was used.
+    def synthesize_solutions(self, ticket_context: str, ranked_solutions: List[Dict]) -> Tuple[str, str]:
         prompt = self._build_synthesis_prompt(ticket_context, ranked_solutions)
         content_parts = [prompt]
         
         last_error = None
-        # Use the same reliable fallback chain for synthesis
         for model_name in self.model_fallback_chain:
             try:
                 print(f"--- Attempting synthesis with model: {model_name} ---")
                 client = self._get_client(model_name)
-                
-                # Synthesis is text-only, no images needed
                 response_text = self._make_api_call(client, model_name, content_parts)
                 
                 print(f"✅ Synthesis success with model: {model_name}")
-                return response_text
+                return response_text, model_name
             except Exception as e:
                 last_error = e
                 print(f"❌ Synthesis failed for model {model_name}. Error: {e}")
                 continue
 
-        return f"Could not generate a solution. All LLM providers failed. Last error: {last_error}"
+        return f"Could not generate a solution. All LLM providers failed. Last error: {last_error}", "all_failed"
 
 
     def _build_validation_prompt(self, ticket_text_bundle: str, module_knowledge: dict) -> str:
@@ -137,8 +130,6 @@ class LLMService:
         **Your Verdict (JSON only)**
         """
 
-    # --- FEATURE 2.3 ENHANCEMENT ---
-    # New prompt for the synthesis step.
     def _build_synthesis_prompt(self, ticket_context: str, ranked_solutions: List[Dict]) -> str:
         solutions_str = "\n\n---\n\n".join([
             f"**Ticket:** {sol['ticket_key']}\n**Summary:** {sol['summary']}\n**Resolution:** {sol['resolution']}"

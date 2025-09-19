@@ -19,22 +19,31 @@ class FindResolutionWorkflow:
             "retry_policy": retry_policy
         }
 
-        # The activity returns a result that might be a dict due to serialization.
         solution_result_raw = await workflow.execute_activity(
             "find_and_synthesize_solutions_activity",
             input_data,
             **activity_options
         )
 
-        # --- FLAWLESS FIX ---
-        # We apply our resilient pattern: check if the result is a dict,
-        # and if so, convert it back to the expected SynthesizedSolution object.
         if isinstance(solution_result_raw, dict):
-            workflow.logger.info("Solution received as dict, converting to SynthesizedSolution object.")
             solution_result = SynthesizedSolution(**solution_result_raw)
         else:
             solution_result = solution_result_raw
 
-        workflow.logger.info(f"Resolution workflow for {input_data.ticket_key} completed.")
-        return f"Resolution Found: {solution_result.solution_text}"
+        # --- FINAL FEATURE ---
+        # Call the new activities to post the solution and log the result.
+        await workflow.execute_activity(
+            "post_solution_to_jira_activity",
+            args=[input_data.ticket_key, solution_result],
+            **activity_options,
+        )
+
+        await workflow.execute_activity(
+            "log_resolution_activity",
+            args=[input_data.ticket_key, solution_result],
+            **activity_options,
+        )
+
+        workflow.logger.info(f"Resolution workflow for {input_data.ticket_key} completed and posted.")
+        return f"Solution posted to JIRA ticket {input_data.ticket_key}."
 

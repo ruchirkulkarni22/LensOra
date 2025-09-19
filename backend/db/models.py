@@ -11,9 +11,6 @@ class ModulesTaxonomy(Base):
     id = Column(Integer, primary_key=True, index=True)
     module_name = Column(String, unique=True, index=True, nullable=False)
     description = Column(String)
-    
-    # This relationship defines that a Module can have many mandatory fields.
-    # It correctly points to the 'module' property on the MandatoryFieldTemplates class.
     mandatory_fields = relationship("MandatoryFieldTemplates", back_populates="module", cascade="all, delete-orphan")
 
 class MandatoryFieldTemplates(Base):
@@ -21,10 +18,6 @@ class MandatoryFieldTemplates(Base):
     id = Column(Integer, primary_key=True, index=True)
     module_id = Column(Integer, ForeignKey("modules_taxonomy.id"), nullable=False)
     field_name = Column(String, nullable=False)
-
-    # --- FLAWLESS FIX ---
-    # This relationship defines that a mandatory field belongs to one module.
-    # It correctly points back to the 'mandatory_fields' property on the ModulesTaxonomy class.
     module = relationship("ModulesTaxonomy", back_populates="mandatory_fields")
 
 class ValidationsLog(Base):
@@ -45,4 +38,13 @@ class SolvedJiraTickets(Base):
     description = Column(Text)
     resolution = Column(Text, nullable=False)
     embedding = Column(VECTOR(384))
+
+# --- FINAL FEATURE ---
+# New table to log every successful resolution.
+class ResolutionLog(Base):
+    __tablename__ = "resolution_log"
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_key = Column(String, index=True, nullable=False)
+    solution_posted = Column(Text, nullable=False)
+    llm_provider_model = Column(String)
 

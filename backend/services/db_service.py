@@ -1,36 +1,31 @@
 # File: backend/services/db_service.py
-import json
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker, joinedload
 from sqlalchemy.dialects.postgresql import insert
 from backend.config import settings
-# --- FLAWLESS FIX ---
-# Corrected the import from ValidationLog to ValidationsLog to match the model class name.
-from backend.db.models import ModulesTaxonomy, MandatoryFieldTemplates, ValidationsLog
-from backend.workflows.shared import LLMVerdict
+from backend.db.models import (
+    ModulesTaxonomy,
+    MandatoryFieldTemplates,
+    ValidationsLog,
+    SolvedJiraTickets,
+    # --- FINAL FEATURE ---
+    # Import the new ResolutionLog model
+    ResolutionLog
+)
+from backend.workflows.shared import LLMVerdict, SynthesizedSolution
 import pandas as pd
+from typing import List, Dict
 
 class DatabaseService:
-    """
-    A service to interact with the application's PostgreSQL database.
-    """
     def __init__(self):
         self.engine = create_engine(settings.DATABASE_URL)
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
 
     def get_all_modules_with_fields(self) -> dict:
-        """
-        Fetches all modules and their associated mandatory fields from the database.
-        This provides the "knowledge" for the LLM.
-        """
         db = self.SessionLocal()
         try:
-            stmt = (
-                select(ModulesTaxonomy)
-                .options(joinedload(ModulesTaxonomy.mandatory_fields))
-            )
+            stmt = select(ModulesTaxonomy).options(joinedload(ModulesTaxonomy.mandatory_fields))
             modules = db.execute(stmt).scalars().unique().all()
-            
             knowledge_base = {}
             for module in modules:
                 knowledge_base[module.module_name] = {
@@ -42,9 +37,6 @@ class DatabaseService:
             db.close()
 
     def log_validation_result(self, ticket_key: str, verdict: LLMVerdict):
-        """
-        Logs the result of a ticket validation to the ValidationsLog table.
-        """
         db = self.SessionLocal()
         try:
             log_entry = ValidationsLog(
@@ -52,76 +44,67 @@ class DatabaseService:
                 module=verdict.module,
                 status=verdict.validation_status,
                 missing_fields=verdict.missing_fields,
-                confidence=str(verdict.confidence), # Store as string for flexibility
-                llm_provider_model=verdict.llm_provider_model
+                confidence=str(verdict.confidence),
+                llm_provider_model=verdict.llm_provider_model,
             )
             db.add(log_entry)
             db.commit()
-            print(f"Successfully logged validation verdict for {ticket_key} using model {verdict.llm_provider_model}.")
-        except Exception as e:
-            db.rollback()
-            print(f"Failed to log validation verdict for {ticket_key}. Error: {e}")
         finally:
             db.close()
-            
-    def upsert_module_knowledge(self, df: pd.DataFrame) -> dict:
-        """
-        Processes a DataFrame and upserts module and mandatory field knowledge.
-        - Creates new modules if they don't exist.
-        - Adds new mandatory fields to existing or new modules.
-        - Skips duplicates gracefully.
-        """
+
+    def process_knowledge_upload(self, df: pd.DataFrame) -> dict:
         db = self.SessionLocal()
-        processed_count = 0
-        upserted_count = 0
-        errors = []
-
         try:
-            # Group by module to handle them transactionally
-            for module_name, group in df.groupby('module_name'):
-                # 1. Upsert the module itself
-                module_stmt = insert(ModulesTaxonomy).values(
-                    module_name=module_name,
-                    description=f"{module_name} process" # Default description
-                ).on_conflict_do_nothing(
-                    index_elements=['module_name']
+            processed_count = 0
+            upserted_count = 0
+            
+            for _, row in df.iterrows():
+                module_name = row['module_name']
+                field_name = row['field_name']
+                processed_count += 1
+
+                module_stmt = select(ModulesTaxonomy).where(ModulesTaxonomy.module_name == module_name)
+                module = db.execute(module_stmt).scalar_one_or_none()
+                if not module:
+                    print(f"Creating new module: {module_name}")
+                    module = ModulesTaxonomy(module_name=module_name, description=f"{module_name} process")
+                    db.add(module)
+                    db.flush() 
+
+                field_stmt = select(MandatoryFieldTemplates).where(
+                    MandatoryFieldTemplates.module_id == module.id,
+                    MandatoryFieldTemplates.field_name == field_name
                 )
-                db.execute(module_stmt)
-
-                # Get the module ID, whether it was new or existing
-                module = db.query(ModulesTaxonomy).filter(ModulesTaxonomy.module_name == module_name).one()
-
-                # 2. Upsert the mandatory fields for this module
-                for _, row in group.iterrows():
-                    processed_count += 1
-                    field_name = row['field_name']
-
-                    # Check if this field already exists for this module
-                    exists = db.query(MandatoryFieldTemplates).filter_by(
-                        module_id=module.id,
-                        field_name=field_name
-                    ).first()
-
-                    if not exists:
-                        new_field = MandatoryFieldTemplates(
-                            module_id=module.id,
-                            field_name=field_name
-                        )
-                        db.add(new_field)
-                        upserted_count += 1
-                        print(f"Creating new field '{field_name}' for module '{module_name}'")
+                field = db.execute(field_stmt).scalar_one_or_none()
+                if not field:
+                    print(f"Creating new field '{field_name}' for module '{module_name}'")
+                    new_field = MandatoryFieldTemplates(module_id=module.id, field_name=field_name)
+                    db.add(new_field)
+                    upserted_count += 1
             
             db.commit()
             print("Knowledge base update committed successfully.")
-            
+            return {"rows_processed": processed_count, "rows_upserted": upserted_count, "errors": []}
         except Exception as e:
             db.rollback()
-            errors.append(str(e))
-            print(f"An error occurred during knowledge upsert: {e}")
+            return {"rows_processed": 0, "rows_upserted": 0, "errors": [str(e)]}
         finally:
             db.close()
-        
-        return {"rows_processed": processed_count, "rows_upserted": upserted_count, "errors": errors}
+
+    # --- FINAL FEATURE ---
+    # New method to log the successful resolution.
+    def log_resolution(self, ticket_key: str, solution: SynthesizedSolution):
+        db = self.SessionLocal()
+        try:
+            log_entry = ResolutionLog(
+                ticket_key=ticket_key,
+                solution_posted=solution.solution_text,
+                llm_provider_model=solution.llm_provider_model
+            )
+            db.add(log_entry)
+            db.commit()
+        finally:
+            db.close()
 
 
 db_service = DatabaseService()
