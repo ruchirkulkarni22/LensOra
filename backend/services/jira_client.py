@@ -24,21 +24,23 @@ class JiraService:
         """
         issue = self.client.issue(ticket_key)
         
-        # --- FLAWLESS UPGRADE ---
-        # We now separate image attachments from other file types so the
-        # multimodal LLM can process them correctly.
         image_attachments = []
         other_attachments = []
-        for attachment in issue.fields.attachment:
-            attachment_details = {
-                "filename": attachment.filename,
-                "url": attachment.content,
-                "mimeType": attachment.mimeType
-            }
-            if 'image' in attachment.mimeType:
-                image_attachments.append(attachment_details)
-            else:
-                other_attachments.append(attachment_details)
+
+        # --- BUG FIX ---
+        # Safely check if the 'attachment' field exists on the issue before trying
+        # to loop through it. This prevents errors on tickets that have no attachments.
+        if hasattr(issue.fields, 'attachment') and issue.fields.attachment:
+            for attachment in issue.fields.attachment:
+                attachment_details = {
+                    "filename": attachment.filename,
+                    "url": attachment.content,
+                    "mimeType": attachment.mimeType
+                }
+                if 'image' in attachment.mimeType:
+                    image_attachments.append(attachment_details)
+                else:
+                    other_attachments.append(attachment_details)
         
         reporter_id = None
         if hasattr(issue.fields.reporter, 'accountId'):
@@ -85,4 +87,3 @@ class JiraService:
         response.raise_for_status()
 
 jira_service = JiraService()
-

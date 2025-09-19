@@ -7,9 +7,6 @@ class TicketValidationInput:
     """Input for the validation workflow."""
     ticket_key: str
 
-# --- FLAWLESS UPGRADE ---
-# We are replacing the simple TextBundle with a more powerful context object.
-# This will carry not just the text, but also any images for multimodal analysis.
 @dataclass
 class TicketContext:
     """
@@ -18,13 +15,14 @@ class TicketContext:
     """
     bundled_text: str
     reporter_id: Optional[str] = None
-    # This is the key addition: a list to hold the raw bytes of any image attachments.
     image_attachments: List[bytes] = field(default_factory=list)
 
 @dataclass
 class LLMVerdict:
     """Structured result from the LLM validation activity."""
-    detected_module: str
+    # --- FEATURE 1.1 ENHANCEMENT ---
+    # Renamed 'detected_module' to 'module' and added 'confidence'.
+    module: str
     validation_status: str # 'complete' or 'incomplete'
     missing_fields: List[str] = field(default_factory=list)
-
+    confidence: float = 0.0

@@ -55,21 +55,23 @@ class ValidationActivities:
             image_attachments=ticket_context.image_attachments
         )
         
-        # --- FLAWLESS FIX (SIDE 1) ---
-        # We ensure this activity ALWAYS returns the correct dataclass object, not a dict.
-        # This is the first line of defense against data type errors.
+        # --- FEATURE 1.1 ENHANCEMENT ---
+        # Now creating the LLMVerdict dataclass with the new 'module' and 'confidence' fields.
         return LLMVerdict(
-            detected_module=verdict_dict.get("detected_module", "Unknown"),
+            module=verdict_dict.get("module", "Unknown"),
             validation_status=verdict_dict.get("validation_status", "error"),
-            missing_fields=verdict_dict.get("missing_fields", [])
+            missing_fields=verdict_dict.get("missing_fields", []),
+            confidence=verdict_dict.get("confidence", 0.0)
         )
 
     @activity.defn
     async def comment_and_reassign_activity(self, ticket_key: str, verdict: LLMVerdict, reporter_id: str) -> str:
         missing_fields_str = ", ".join(verdict.missing_fields or [])
+        # --- FEATURE 1.1 ENHANCEMENT ---
+        # Using verdict.module instead of verdict.detected_module in the comment.
         message = (
             f"Hello,\n\n"
-            f"This ticket, identified for the '{verdict.detected_module}' process, is currently incomplete. "
+            f"This ticket, identified for the '{verdict.module}' process, is currently incomplete. "
             f"To proceed, please provide the following missing information:\n"
             f"- {missing_fields_str}\n\n"
             f"This ticket requires your attention. Please update it with the required details.\n\n"
@@ -92,4 +94,3 @@ class ValidationActivities:
             activity.logger.error(f"Failed to reassign ticket {ticket_key}, falling back to comment-only. Error: {e}")
             self.jira_service.add_comment(ticket_key, message)
             return f"Ticket {ticket_key} commented on, but reassignment failed."
-

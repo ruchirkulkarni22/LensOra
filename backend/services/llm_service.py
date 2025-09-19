@@ -22,9 +22,6 @@ class LLMService:
         """
         prompt = self._build_prompt(ticket_text_bundle, module_knowledge)
         
-        # --- FLAWLESS UPGRADE ---
-        # Construct the payload for the multimodal API call.
-        # It starts with the text prompt and adds each image.
         content_parts = [prompt]
         if image_attachments:
             print(f"Adding {len(image_attachments)} image(s) to the LLM prompt.")
@@ -34,7 +31,6 @@ class LLMService:
         print("--- Sending Multimodal Prompt to Gemini ---")
         
         try:
-            # The actual API call that sends both text and images
             response = self.model.generate_content(content_parts)
             cleaned_response = response.text.strip().replace("```json", "").replace("```", "")
             
@@ -47,9 +43,10 @@ class LLMService:
         except Exception as e:
             print(f"Error calling Gemini API or parsing response: {e}")
             return {
-                "detected_module": "Unknown",
+                "module": "Unknown",
                 "validation_status": "error",
                 "missing_fields": [],
+                "confidence": 0.0,
                 "error_message": str(e)
             }
 
@@ -59,23 +56,25 @@ class LLMService:
         """
         knowledge_str = json.dumps(module_knowledge, indent=2)
         
-        # --- FLAWLESS UPGRADE ---
-        # Updated prompt to explicitly tell the LLM to look at attached images.
+        # --- FEATURE 1.1 ENHANCEMENT ---
+        # Updated prompt to request a confidence score and use the key 'module'.
         return f"""
         **System Preamble**
         You are an expert AI agent for Oracle ERP systems. Your task is to analyze a JIRA ticket's text AND ANY ATTACHED IMAGES to determine if it contains all the mandatory information for a business process.
 
         **Instructions**
-        1.  Analyze the 'JIRA Ticket Text Bundle' and critically examine any images provided. The information might be in the text, the images, or split between them.
-        2.  Determine which ERP module the ticket relates to. Choose from 'Module Knowledge Base'.
+        1.  Analyze the 'JIRA Ticket Text Bundle' and critically examine any images provided. Information can be in the text, images, or split between them.
+        2.  Determine which ERP module the ticket relates to from the 'Module Knowledge Base'.
         3.  Check if all 'mandatory_fields' for that module are present in the combined text and image content.
-        4.  Provide your final verdict in a single, clean JSON object. Do not add any explanatory text.
+        4.  Provide a confidence score (0.0 to 1.0) on how certain you are about your validation.
+        5.  Provide your final verdict in a single, clean JSON object. Do not add any explanatory text.
 
         **JSON Output Format**
         {{
-          "detected_module": "The name of the module you identified",
+          "module": "The name of the module you identified",
           "validation_status": "Either 'complete' or 'incomplete'",
-          "missing_fields": ["A list of missing mandatory fields. Empty if complete."]
+          "missing_fields": ["A list of missing mandatory fields. Empty if complete."],
+          "confidence": 0.95
         }}
 
         ---
@@ -93,4 +92,3 @@ class LLMService:
         """
 
 llm_service = LLMService()
-

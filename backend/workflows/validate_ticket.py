@@ -13,15 +13,11 @@ class ValidateTicketWorkflow:
         activity_options = { "start_to_close_timeout": timedelta(minutes=5), "retry_policy": retry_policy }
 
         workflow.logger.info(f"Gathering multimodal context for {input_data.ticket_key}")
-        # We now call the activity and store the raw result first.
+        
         ticket_context_raw = await workflow.execute_activity(
             "fetch_and_bundle_ticket_context_activity", input_data.ticket_key, **activity_options
         )
 
-        # --- FLAWLESS FIX ---
-        # We apply the same bulletproof pattern here. We check if the result
-        # is a dict and, if so, convert it back to the TicketContext object.
-        # This makes the workflow completely resilient to this class of error.
         if isinstance(ticket_context_raw, dict):
             workflow.logger.info("Context received as dict, converting to TicketContext object.")
             ticket_context = TicketContext(**ticket_context_raw)
@@ -37,6 +33,12 @@ class ValidateTicketWorkflow:
             llm_verdict = LLMVerdict(**llm_verdict_raw)
         else:
             llm_verdict = llm_verdict_raw
+        
+        # --- FEATURE 1.1 ENHANCEMENT ---
+        # The logic for the fallback based on confidence will be added here in a future step.
+        # For now, we are just logging the confidence score.
+        workflow.logger.info(f"LLM Verdict received with confidence: {llm_verdict.confidence}")
+
 
         if llm_verdict.validation_status == "incomplete":
             workflow.logger.info(f"Verdict for {input_data.ticket_key}: INCOMPLETE. Missing: {llm_verdict.missing_fields}")
@@ -63,4 +65,3 @@ class ValidateTicketWorkflow:
         else:
             workflow.logger.error(f"LLM returned an error status for {input_data.ticket_key}.")
             return f"Workflow failed. Reason: LLM processing error."
-

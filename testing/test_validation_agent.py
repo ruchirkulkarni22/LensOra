@@ -22,7 +22,7 @@ from backend.services.llm_service import llm_service
 
 # --- CONFIGURATION ---
 # IMPORTANT: Change this to a real JIRA ticket key in your instance for testing
-TEST_TICKET_KEY = "LENS-14" 
+TEST_TICKET_KEY = "LENS-15" 
 
 def test_db_service():
     print("\n--- Testing Database Service ---")
@@ -43,16 +43,27 @@ def test_jira_and_ocr_services():
     try:
         print(f"Fetching ticket {TEST_TICKET_KEY} from JIRA...")
         details = jira_service.get_ticket_details(TEST_TICKET_KEY)
-        text_parts.append(f"Summary: {details['summary']}")
-        text_parts.append(f"Description: {details['description']}")
+        text_parts.append(f"Summary: {details.get('summary', 'N/A')}")
+        text_parts.append(f"Description: {details.get('description', 'N/A')}")
         print("✅ Success: Fetched ticket details.")
         
-        for attachment in details["attachments"]:
-            print(f"Downloading and processing attachment: {attachment['filename']}...")
-            content = jira_service.download_attachment(attachment['url'])
-            text = ocr_service.extract_text_from_bytes(content, attachment['mimeType'])
-            text_parts.append(f"--- Attachment: {attachment['filename']} ---\n{text}")
-            print(f"✅ Success: Processed attachment {attachment['filename']}.")
+        # --- FIX & ENHANCEMENT ---
+        # The test script now correctly checks for the new attachment keys 
+        # ('image_attachments', 'other_attachments') to avoid errors.
+        
+        # Process image attachments (in the test we just log their presence)
+        if details.get("image_attachments"):
+            for attachment in details["image_attachments"]:
+                print(f"✅ Found image attachment to pass to LLM: {attachment['filename']}")
+
+        # Process and OCR other attachments
+        if details.get("other_attachments"):
+            for attachment in details["other_attachments"]:
+                print(f"Downloading and processing attachment: {attachment['filename']}...")
+                content = jira_service.download_attachment(attachment['url'])
+                text = ocr_service.extract_text_from_bytes(content, attachment['mimeType'])
+                text_parts.append(f"--- Attachment: {attachment['filename']} ---\n{text}")
+                print(f"✅ Success: Processed attachment {attachment['filename']}.")
 
         bundle = "\n".join(text_parts)
         print("\n--- Full Text Bundle ---")
@@ -70,13 +81,17 @@ def test_llm_service(bundle, knowledge):
         print("❌ Skipping LLM test due to previous errors.")
         return
     try:
+        # In this test, we are not passing images, just the text bundle.
         verdict = llm_service.get_validation_verdict(bundle, knowledge)
         print("\n--- LLM Verdict ---")
         print(verdict)
         print("-------------------")
-        assert "detected_module" in verdict
+        # --- FEATURE 1.1 ENHANCEMENT ---
+        # Updated assertions to match the new LLM verdict structure.
+        assert "module" in verdict
         assert "validation_status" in verdict
-        print("✅ Success: Received a valid JSON verdict from the LLM.")
+        assert "confidence" in verdict
+        print("✅ Success: Received a valid JSON verdict from the LLM, including confidence score.")
     except Exception as e:
         print(f"❌ Failure: LLM service failed. Error: {e}")
 
@@ -90,4 +105,3 @@ if __name__ == "__main__":
     test_llm_service(ticket_bundle, module_knowledge)
 
     print("\n🏁 Test run finished. 🏁")
-
