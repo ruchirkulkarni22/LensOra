@@ -20,9 +20,11 @@ class TicketContext:
 @dataclass
 class LLMVerdict:
     """Structured result from the LLM validation activity."""
-    # --- FEATURE 1.1 ENHANCEMENT ---
-    # Renamed 'detected_module' to 'module' and added 'confidence'.
     module: str
     validation_status: str # 'complete' or 'incomplete'
     missing_fields: List[str] = field(default_factory=list)
     confidence: float = 0.0
+    # --- FEATURE 1.1.3 ENHANCEMENT ---
+    # This field will store the name of the model that successfully returned a verdict.
+    llm_provider_model: Optional[str] = None
+

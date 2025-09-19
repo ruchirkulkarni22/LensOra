@@ -22,3 +22,5 @@ requests
 python-dotenv
 # FLAWLESS FIX: Added for JIRA integration
 jira
+google-generativeai
+openai

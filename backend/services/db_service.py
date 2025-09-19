@@ -25,11 +25,13 @@ class DatabaseService:
                 status=verdict.validation_status,
                 missing_fields=verdict.missing_fields,
                 confidence=verdict.confidence,
-                llm_provider_model="gemini-1.5-flash" 
+                # --- FEATURE 1.1.3 ENHANCEMENT ---
+                # This is now dynamic, taken directly from the verdict object.
+                llm_provider_model=verdict.llm_provider_model
             )
             db.add(log_entry)
             db.commit()
-            print(f"Successfully logged validation verdict for {ticket_key}.")
+            print(f"Successfully logged validation verdict for {ticket_key} using model {verdict.llm_provider_model}.")
         except Exception as e:
             print(f"Error logging validation verdict for {ticket_key}: {e}")
             db.rollback()

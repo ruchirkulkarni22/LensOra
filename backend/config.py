@@ -15,6 +15,7 @@ class Settings:
     @property
     def DATABASE_URL(self):
         host = self.DB_HOST
+        # This logic is for docker-compose vs local running
         if host == "postgres" and os.environ.get("DOCKER_ENV") != "true":
             host = "localhost"
         return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{host}:{self.DB_PORT}/{self.DB_NAME}"
@@ -36,8 +37,17 @@ class Settings:
     SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
     EMAIL_SENDER = os.getenv("EMAIL_SENDER")
     
-    # NEW: Gemini API Key
+    # --- FEATURE 1.1.3 ENHANCEMENT ---
+    # API Keys for multiple LLM providers
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+    # Define the fallback model chain as per the PRD
+    LLM_FALLBACK_CHAIN = [
+        "gemini-1.5-flash",
+        "gemini-2.0-flash",
+        "gemini-2.5-flash",
+        # Add more models here in the future, e.g., "gemini-1.5-pro", "gpt-4o"
+    ]
 
 settings = Settings()
-

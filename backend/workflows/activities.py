@@ -48,9 +48,10 @@ class ValidationActivities:
 
     @activity.defn
     async def get_llm_verdict_activity(self, ticket_context: TicketContext) -> LLMVerdict:
-        activity.logger.info("Fetching module knowledge and sending context to LLM...")
+        activity.logger.info("Fetching module knowledge and sending context to LLM with fallback...")
         module_knowledge = self.db_service.get_all_modules_with_fields()
         
+        # This now calls the robust, new method in our service
         verdict_dict = self.llm_service.get_validation_verdict(
             ticket_text_bundle=ticket_context.bundled_text,
             module_knowledge=module_knowledge,
@@ -61,13 +62,17 @@ class ValidationActivities:
             module=verdict_dict.get("module", "Unknown"),
             validation_status=verdict_dict.get("validation_status", "error"),
             missing_fields=verdict_dict.get("missing_fields", []),
-            confidence=verdict_dict.get("confidence", 0.0)
+            confidence=verdict_dict.get("confidence", 0.0),
+            # --- FEATURE 1.1.3 ENHANCEMENT ---
+            # Pass the successful model's name from the service to the workflow.
+            llm_provider_model=verdict_dict.get("llm_provider_model")
         )
 
     @activity.defn
     async def log_validation_result_activity(self, ticket_key: str, verdict: LLMVerdict) -> None:
         """Logs the final validation verdict to the database."""
-        activity.logger.info(f"Logging validation verdict for ticket {ticket_key}...")
+        activity.logger.info(f"Logging validation verdict for ticket {ticket_key} from model {verdict.llm_provider_model}...")
+        # The db_service will now correctly log the model that was used.
         self.db_service.log_validation_verdict(ticket_key, verdict)
         activity.logger.info("Logging complete.")
 
