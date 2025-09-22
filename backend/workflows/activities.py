@@ -89,8 +89,8 @@ class ValidationActivities:
             f"This ticket, identified for the '{verdict.module}' process, is currently incomplete. "
             f"To proceed, please provide the following missing information:\n"
             f"- {missing_fields_str}\n\n"
-            f"This ticket requires your attention. Please update it with the required details.\n\n"
-            f"Thank you,\nLensOraAI Agent"
+            f"Please update the ticket with the required details. It has been assigned back to you for attention.\n\n"
+            f"Sincerely,\nLensOraAI Agent"
         )
         
         if not reporter_id:

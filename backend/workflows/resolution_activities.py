@@ -8,15 +8,14 @@ class ResolutionActivities:
     def __init__(self):
         from backend.services.rag_service import rag_service
         from backend.services.llm_service import llm_service
-        # --- FINAL FEATURE ---
-        # Add the jira_service and db_service for the new activities.
         from backend.services.jira_client import jira_service
         from backend.services.db_service import db_service
+        
         self.rag_service = rag_service
         self.llm_service = llm_service
         self.jira_service = jira_service
         self.db_service = db_service
-
+        
     @activity.defn
     async def find_and_synthesize_solutions_activity(self, data: ResolutionInput) -> SynthesizedSolution:
         """
@@ -31,39 +30,36 @@ class ResolutionActivities:
 
         if not similar_tickets:
             activity.logger.warning(f"No similar tickets found for {data.ticket_key}.")
-            return SynthesizedSolution(solution_text="I could not find any similar past issues in our knowledge base. This may be a new type of issue that requires manual investigation.", llm_provider_model="N/A")
+            return SynthesizedSolution(
+                solution_text="I could not find any similar past issues in our knowledge base. This may be a new type of problem.",
+                llm_provider_model="system-generated"
+            )
 
-        activity.logger.info(f"Found {len(similar_tickets)} similar tickets. Synthesizing solution...")
+        activity.logger.info(f"Found {len(similar_tickets)} similar tickets in the database.")
         
-        synthesized_text, model_used = self.llm_service.synthesize_solutions(
+        # The LLM service now directly returns a SynthesizedSolution object
+        solution = self.llm_service.synthesize_solutions(
             ticket_context=data.ticket_bundled_text,
             ranked_solutions=similar_tickets
         )
         
-        activity.logger.info(f"Successfully synthesized solution for {data.ticket_key}.")
-        print("--- Synthesized Solution ---")
-        print(synthesized_text)
-        print("----------------------------")
+        return solution
 
-        return SynthesizedSolution(solution_text=synthesized_text, llm_provider_model=model_used)
-
-    # --- FINAL FEATURE ---
-    # New activity to post the final solution as a comment in JIRA.
     @activity.defn
     async def post_solution_to_jira_activity(self, ticket_key: str, solution: SynthesizedSolution) -> str:
         """
-        Posts the synthesized solution to the JIRA ticket as a public comment.
+        Posts the synthesized solution as a comment on the JIRA ticket.
         """
         activity.logger.info(f"Posting solution to JIRA ticket {ticket_key}...")
         try:
             comment = (
                 f"Hello,\n\n"
-                f"LensOraAI has analyzed this ticket and found potential solutions based on past issues:\n\n"
+                f"Based on an analysis of similar past issues, here is a suggested resolution for your ticket:\n\n"
+                f"---\n"
+                f"{solution.solution_text}\n"
                 f"---\n\n"
-                f"{solution.solution_text}\n\n"
-                f"---\n\n"
-                f"This is an automated suggestion. Please review and verify the steps.\n"
-                f"(Model used: {solution.llm_provider_model})"
+                f"This is an automated suggestion generated to assist you. Please review the steps before taking action.\n\n"
+                f"Sincerely,\nLensOraAI Agent"
             )
             self.jira_service.add_comment(ticket_key, comment)
             message = f"Successfully posted solution to JIRA ticket {ticket_key}."
@@ -72,11 +68,8 @@ class ResolutionActivities:
         except Exception as e:
             error_message = f"Failed to post solution to JIRA ticket {ticket_key}. Error: {e}"
             activity.logger.error(error_message)
-            # Do not fail the workflow, just log the error.
             return error_message
-            
-    # --- FINAL FEATURE ---
-    # New activity to log the successful resolution to our database.
+
     @activity.defn
     async def log_resolution_activity(self, ticket_key: str, solution: SynthesizedSolution) -> str:
         """

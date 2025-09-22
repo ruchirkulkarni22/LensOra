@@ -29,9 +29,7 @@ class FindResolutionWorkflow:
             solution_result = SynthesizedSolution(**solution_result_raw)
         else:
             solution_result = solution_result_raw
-
-        # --- FINAL FEATURE ---
-        # Call the new activities to post the solution and log the result.
+            
         await workflow.execute_activity(
             "post_solution_to_jira_activity",
             args=[input_data.ticket_key, solution_result],

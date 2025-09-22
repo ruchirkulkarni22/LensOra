@@ -4,6 +4,7 @@ from openai import OpenAI
 import json
 from backend.config import settings
 from typing import List, Dict, Tuple
+from backend.workflows.shared import SynthesizedSolution
 
 class LLMService:
     """
@@ -74,8 +75,9 @@ class LLMService:
         }
 
     # --- FINAL FEATURE ---
-    # Now returns a tuple: the synthesized text AND the model that was used.
-    def synthesize_solutions(self, ticket_context: str, ranked_solutions: List[Dict]) -> Tuple[str, str]:
+    # Now returns a SynthesizedSolution object with the solution text and the model that was used.
+    def synthesize_solutions(self, ticket_context: str, ranked_solutions: List[Dict]) -> SynthesizedSolution:
+        
         prompt = self._build_synthesis_prompt(ticket_context, ranked_solutions)
         content_parts = [prompt]
         
@@ -87,13 +89,19 @@ class LLMService:
                 response_text = self._make_api_call(client, model_name, content_parts)
                 
                 print(f"✅ Synthesis success with model: {model_name}")
-                return response_text, model_name
+                return SynthesizedSolution(
+                    solution_text=response_text,
+                    llm_provider_model=model_name
+                )
             except Exception as e:
                 last_error = e
                 print(f"❌ Synthesis failed for model {model_name}. Error: {e}")
                 continue
 
-        return f"Could not generate a solution. All LLM providers failed. Last error: {last_error}", "all_failed"
+        return SynthesizedSolution(
+            solution_text=f"Could not generate a solution. All LLM providers failed. Last error: {last_error}",
+            llm_provider_model="all_failed"
+        )
 
 
     def _build_validation_prompt(self, ticket_text_bundle: str, module_knowledge: dict) -> str:

@@ -12,9 +12,21 @@ class PollingService:
     """
     def __init__(self):
         self.interval_minutes = 5
-        # JQL to find issues updated in the last X minutes, not yet validated by us.
-        self.jql_query = f'project = LENS AND updated >= "-{self.interval_minutes}m"'
         self.temporal_client: Client | None = None
+
+        # --- SPAM CONTROL ENHANCEMENT (POLLING) ---
+        # We construct the JQL query dynamically.
+        # It finds tickets updated recently BUT excludes tickets where the
+        # last update was performed by our agent's own user account.
+        # This prevents the poller from getting into a loop.
+        base_jql = f'project = LENS AND updated >= "-{self.interval_minutes}m"'
+        if settings.JIRA_AGENT_USER_ACCOUNT_ID:
+            agent_id = settings.JIRA_AGENT_USER_ACCOUNT_ID
+            self.jql_query = f'{base_jql} AND updatedBy != "{agent_id}"'
+        else:
+            self.jql_query = base_jql
+            print("WARNING: JIRA_AGENT_USER_ACCOUNT_ID is not set. Polling loop protection is disabled.")
+
 
     async def _ensure_client_connected(self):
         """Connects to Temporal if not already connected."""
@@ -29,14 +41,25 @@ class PollingService:
     async def start_polling(self):
         """The main loop that runs forever, polling at a set interval."""
         print(f"✅ Starting JIRA polling service. Will poll every {self.interval_minutes} minutes.")
+        print(f"   Using JQL Query: {self.jql_query}")
+        
+        # We will use a shorter interval for the very first poll on startup.
+        # This makes testing faster.
+        is_first_run = True
+
         while True:
-            await asyncio.sleep(self.interval_minutes * 60)
-            print(f"⏰ Polling JIRA for tickets updated in the last {self.interval_minutes} minutes...")
+            if is_first_run:
+                await asyncio.sleep(10) # Wait 10 seconds on first run
+                is_first_run = False
+            else:
+                await asyncio.sleep(self.interval_minutes * 60)
+
+            print(f"\n--- Polling JIRA for updates ({self.interval_minutes} min interval) ---")
             try:
-                from .jira_client import jira_service # Local import to avoid circular dependency
+                # Local import to avoid circular dependency issues on startup
+                from .jira_client import jira_service 
                 await self._ensure_client_connected()
 
-                # Search for issues using the JQL query
                 issues = jira_service.client.search_issues(self.jql_query)
                 
                 if not issues:

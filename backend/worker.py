@@ -34,8 +34,6 @@ async def main():
             
             # Resolution Activities
             resolution_activities.find_and_synthesize_solutions_activity,
-            # --- FINAL FEATURE ---
-            # Register the new notification and logging activities.
             resolution_activities.post_solution_to_jira_activity,
             resolution_activities.log_resolution_activity,
         ],

@@ -1,5 +1,5 @@
 # File: backend/db/models.py
-from sqlalchemy import Column, Integer, String, ForeignKey, JSON, Text
+from sqlalchemy import Column, Integer, String, ForeignKey, JSON, Text, Float
 from sqlalchemy.orm import relationship, declarative_base
 import pgvector.sqlalchemy
 from pgvector.sqlalchemy import VECTOR
@@ -27,7 +27,7 @@ class ValidationsLog(Base):
     module = Column(String, nullable=False)
     status = Column(String, nullable=False)
     missing_fields = Column(JSON)
-    confidence = Column(String)
+    confidence = Column(Float)
     llm_provider_model = Column(String)
 
 class SolvedJiraTickets(Base):
