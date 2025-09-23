@@ -40,7 +40,7 @@ class Settings:
     # Fallback chain for LLM providers. The service will try them in this order.
     # We can add more models here in the future.
     LLM_FALLBACK_CHAIN: List[str] = [
-        "gemini-1.5-flash",
+        # "gemini-1.5-flash",
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
         "gemini-2.5-flash",

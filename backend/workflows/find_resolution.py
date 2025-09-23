@@ -74,4 +74,3 @@ class PostResolutionWorkflow:
         
         workflow.logger.info(f"Human-approved solution posted to JIRA ticket {ticket_key}.")
         return f"Human-approved solution posted to JIRA ticket {ticket_key}."
-

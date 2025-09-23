@@ -173,13 +173,9 @@ async def generate_solutions(ticket_key: str):
     This will be called when a human resolver selects a ticket from the queue.
     """
     try:
-        # Get the ticket details from JIRA
         from backend.services.jira_client import jira_service
-        
-        # Local imports to avoid circular dependencies
         from backend.workflows.shared import ResolutionInput
         
-        # Get the ticket details from our database or JIRA
         details = jira_service.get_ticket_details(ticket_key)
         
         text_parts = [
@@ -199,7 +195,6 @@ async def generate_solutions(ticket_key: str):
             ticket_bundled_text=bundled_text
         )
         
-        # Start the FindResolutionWorkflow to generate solution alternatives
         handle = await client.start_workflow(
             "FindResolutionWorkflow",
             resolution_input,
@@ -208,7 +203,6 @@ async def generate_solutions(ticket_key: str):
             id_reuse_policy=WorkflowIDReusePolicy.TERMINATE_IF_RUNNING,
         )
         
-        # Wait for the result (this is synchronous)
         result = await handle.result()
         
         return {
@@ -236,13 +230,14 @@ async def post_solution(ticket_key: str = Path(...), solution: SolutionApproval 
             namespace=settings.TEMPORAL_NAMESPACE,
         )
         
-        # Convert the Pydantic model to a dictionary
         solution_dict = solution.model_dump()
         
-        # Start the PostResolutionWorkflow to post the solution to JIRA
+        # --- FLAWLESS FIX ---
+        # The arguments must be passed separately to the workflow, not as a single list.
+        # This resolves the `TypeError: missing 1 required positional argument` error.
         await client.start_workflow(
             "PostResolutionWorkflow",
-            [ticket_key, solution_dict],
+            args=[ticket_key, solution_dict],
             id=f"post-resolution-{ticket_key}",
             task_queue="lensora-task-queue",
             id_reuse_policy=WorkflowIDReusePolicy.TERMINATE_IF_RUNNING,
@@ -259,4 +254,3 @@ async def post_solution(ticket_key: str = Path(...), solution: SolutionApproval 
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to post solution: {str(e)}",
         )
-
