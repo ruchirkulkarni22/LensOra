@@ -41,8 +41,12 @@ class Settings:
     # We can add more models here in the future.
     LLM_FALLBACK_CHAIN: List[str] = [
         "gemini-1.5-flash",
-        "gpt-4-turbo",
-        "gpt-3.5-turbo" 
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemma-3-27b-it",
+        # add openAI models after adding API key
     ]
 
 

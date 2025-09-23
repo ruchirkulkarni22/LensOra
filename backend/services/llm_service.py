@@ -1,7 +1,10 @@
 # File: backend/services/llm_service.py
 import google.generativeai as genai
-from openai import OpenAI
+from openai import OpenAI, AuthenticationError
+from google.api_core.exceptions import ResourceExhausted
 import json
+import time
+import random
 from backend.config import settings
 from typing import List, Dict, Tuple
 from backend.workflows.shared import SynthesizedSolution
@@ -9,7 +12,7 @@ from backend.workflows.shared import SynthesizedSolution
 class LLMService:
     """
     The "Brain" of the operation. Handles LLM calls for both validation and synthesis,
-    with a built-in fallback chain for reliability.
+    with a built-in fallback chain and retry logic for reliability.
     """
     def __init__(self):
         self.gemini_api_key = settings.GEMINI_API_KEY
@@ -49,24 +52,48 @@ class LLMService:
         
         last_error = None
         for model_name in self.model_fallback_chain:
-            try:
-                print(f"--- Attempting validation with model: {model_name} ---")
-                client = self._get_client(model_name)
-                raw_response = self._make_api_call(client, model_name, content_parts)
-                cleaned_response = raw_response.strip().replace("```json", "").replace("```", "")
-                
-                print("--- Received Response ---")
-                print(cleaned_response)
-                print("-------------------------")
+            max_retries = 3
+            base_delay = 2  # Start with a 2-second delay
 
-                verdict = json.loads(cleaned_response)
-                verdict['llm_provider_model'] = model_name
-                print(f"✅ Success with model: {model_name}")
-                return verdict
-            except Exception as e:
-                last_error = e
-                print(f"❌ API call failed for model {model_name}. Error: {e}")
-                continue
+            for attempt in range(max_retries):
+                try:
+                    print(f"--- Attempting validation with model: {model_name} (Attempt {attempt + 1}/{max_retries}) ---")
+                    client = self._get_client(model_name)
+                    raw_response = self._make_api_call(client, model_name, content_parts)
+                    cleaned_response = raw_response.strip().replace("```json", "").replace("```", "")
+                    
+                    print("--- Received Response ---")
+                    print(cleaned_response)
+                    print("-------------------------")
+
+                    verdict = json.loads(cleaned_response)
+                    verdict['llm_provider_model'] = model_name
+                    print(f"✅ Success with model: {model_name}")
+                    return verdict
+
+                except (ResourceExhausted) as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                        print(f"Rate limit exceeded for {model_name}. Retrying in {delay:.2f} seconds...")
+                        time.sleep(delay)
+                    else:
+                        print(f"Rate limit exceeded for {model_name}. Max retries reached.")
+                        break # Break from retry loop, move to next model
+                
+                except AuthenticationError as e:
+                    last_error = e
+                    print(f"Authentication error for {model_name}. Check your API key. Skipping to next model.")
+                    break # Break from retry loop, no point in retrying auth error
+
+                except Exception as e:
+                    last_error = e
+                    print(f"❌ API call failed for model {model_name} on attempt {attempt + 1}. Error: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(base_delay) # Wait before generic retry
+                    continue
+            
+            # If the retry loop completes without success, the outer loop continues to the next model
         
         return {
             "module": "Unknown", "validation_status": "error", "missing_fields": [],
@@ -74,10 +101,7 @@ class LLMService:
             "error_message": f"All LLM providers failed. Last error: {str(last_error)}"
         }
 
-    # --- FINAL FEATURE ---
-    # Now returns a SynthesizedSolution object with the solution text and the model that was used.
     def synthesize_solutions(self, ticket_context: str, ranked_solutions: List[Dict]) -> SynthesizedSolution:
-        
         prompt = self._build_synthesis_prompt(ticket_context, ranked_solutions)
         content_parts = [prompt]
         
@@ -103,18 +127,11 @@ class LLMService:
             llm_provider_model="all_failed"
         )
     
-    # --- NEW METHOD FOR FEATURE 2 ---
-    # Generates multiple alternative solutions for human review
     def generate_solution_alternatives(self, ticket_context: str, ranked_solutions: List[Dict], num_alternatives: int = 3) -> List[Dict]:
-        """
-        Generates multiple alternative solutions for a ticket using different approaches.
-        Returns a list of solution alternatives to be displayed in the Admin UI.
-        """
-        # Group historical solutions by different perspectives to get diverse solutions
         solutions_by_approach = [
-            ranked_solutions[:2],  # Top 2 most similar tickets
-            ranked_solutions[2:4] if len(ranked_solutions) > 2 else ranked_solutions[:1], # Next most similar
-            ranked_solutions[-2:] if len(ranked_solutions) > 4 else ranked_solutions[:1]  # Different perspective
+            ranked_solutions[:2],
+            ranked_solutions[2:4] if len(ranked_solutions) > 2 else ranked_solutions[:1],
+            ranked_solutions[-2:] if len(ranked_solutions) > 4 else ranked_solutions[:1]
         ]
         
         alternatives = []
@@ -124,14 +141,13 @@ class LLMService:
             "Focus on explaining the root cause and how to prevent this in the future"
         ]
         
-        model_name = self.model_fallback_chain[0]  # Use the first model in the chain for all alternatives
+        model_name = self.model_fallback_chain[0]
         
         try:
             client = self._get_client(model_name)
             
             for i in range(min(num_alternatives, len(prompt_templates))):
                 try:
-                    # Create a specialized prompt for this alternative
                     approach_prompt = self._build_alternative_solution_prompt(
                         ticket_context, 
                         solutions_by_approach[i], 
@@ -139,11 +155,9 @@ class LLMService:
                     )
                     content_parts = [approach_prompt]
                     
-                    # Get the response
                     response_text = self._make_api_call(client, model_name, content_parts)
                     
-                    # Calculate a confidence score (we'll use a simple heuristic)
-                    confidence = 0.9 - (i * 0.1)  # First alternative has highest confidence
+                    confidence = 0.9 - (i * 0.1)
                     
                     alternatives.append({
                         "solution_text": response_text,
@@ -156,7 +170,6 @@ class LLMService:
         except Exception as e:
             print(f"Failed to initialize LLM client: {e}")
             
-        # If we couldn't generate any alternatives, provide a fallback
         if not alternatives:
             alternatives.append({
                 "solution_text": "Could not generate solution alternatives. Please check the system logs.",
@@ -265,4 +278,3 @@ class LLMService:
         """
 
 llm_service = LLMService()
-
