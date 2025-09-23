@@ -27,26 +27,36 @@ router = APIRouter(prefix="/api")
 @router.get("/polling-logs")
 async def get_polling_logs(request: Request):
     """
-    Streams polling service logs to the frontend using Server-Sent Events (SSE).
+    Streams polling service logs via Server-Sent Events (SSE).
+    Adds an initial message + heartbeats to keep connection alive.
     """
     async def event_generator():
         last_sent_index = 0
+
+        # Initial greeting so UI isn’t blank
+        yield "data: [INFO] Connected to polling log stream.\n\n"
+
         while True:
-            # Check if client has disconnected
             if await request.is_disconnected():
-                print("Client disconnected from polling logs stream.")
                 break
 
-            # If there are new logs, send them
             if len(POLLING_LOGS) > last_sent_index:
                 for i in range(last_sent_index, len(POLLING_LOGS)):
-                    log_entry = POLLING_LOGS[i]
-                    yield f"data: {log_entry}\n\n"
+                    yield f"data: {POLLING_LOGS[i]}\n\n"
                 last_sent_index = len(POLLING_LOGS)
-            
-            await asyncio.sleep(1)
+            else:
+                # Heartbeat every 10s so the browser doesn’t time out
+                yield "data: [HEARTBEAT]\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+            await asyncio.sleep(10)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"  # for nginx/gunicorn
+    }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+
 
 
 @router.post("/jira-webhook", status_code=status.HTTP_200_OK)

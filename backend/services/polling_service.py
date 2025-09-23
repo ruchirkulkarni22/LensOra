@@ -57,8 +57,6 @@ class PollingService:
         self.log_deque = log_deque
         self._log(f"✅ Starting JIRA polling service. Interval: {self.interval_minutes} minutes.")
         
-        await asyncio.sleep(10)
-        
         while True:
             self._log(f"--- Polling JIRA for ticket updates ---")
             try:
