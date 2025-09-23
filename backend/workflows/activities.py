@@ -97,6 +97,27 @@ class ValidationActivities:
             activity.logger.warning(f"No reporter found for ticket {ticket_key}. Adding comment only.")
             self.jira_service.add_comment(ticket_key, message)
             return f"Ticket {ticket_key} commented on successfully (no reassignment)."
+            
+    @activity.defn
+    async def notify_ticket_in_queue_activity(self, ticket_key: str) -> str:
+        """
+        Notifies the reporter that the ticket is now in the resolution queue.
+        """
+        message = (
+            f"Hello,\n\n"
+            f"Thank you for submitting this ticket with complete information. "
+            f"It has been validated by our system and is now in the queue for resolution. "
+            f"Our team will review and provide a solution shortly.\n\n"
+            f"Sincerely,\nLensOraAI Agent"
+        )
+        
+        try:
+            self.jira_service.add_comment(ticket_key, message)
+            return f"Ticket {ticket_key} successfully notified that it's in the resolution queue."
+        except Exception as e:
+            error_message = f"Failed to notify ticket {ticket_key}. Error: {e}"
+            activity.logger.error(error_message)
+            return error_message
 
         try:
             self.jira_service.comment_and_reassign(

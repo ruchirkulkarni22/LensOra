@@ -8,13 +8,11 @@ from backend.db.models import (
     MandatoryFieldTemplates,
     ValidationsLog,
     SolvedJiraTickets,
-    # --- FINAL FEATURE ---
-    # Import the new ResolutionLog model
     ResolutionLog
 )
 from backend.workflows.shared import LLMVerdict, SynthesizedSolution
 import pandas as pd
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 class DatabaseService:
     def __init__(self):
@@ -39,51 +37,61 @@ class DatabaseService:
     def log_validation_result(self, ticket_key: str, verdict: LLMVerdict):
         db = self.SessionLocal()
         try:
-            log_entry = ValidationsLog(
+            stmt = insert(ValidationsLog).values(
                 ticket_key=ticket_key,
                 module=verdict.module,
                 status=verdict.validation_status,
                 missing_fields=verdict.missing_fields,
-                confidence=str(verdict.confidence),
-                llm_provider_model=verdict.llm_provider_model,
+                confidence=verdict.confidence,
+                llm_provider_model=verdict.llm_provider_model
             )
-            db.add(log_entry)
+            
+            update_stmt = stmt.on_conflict_do_update(
+                index_elements=['ticket_key'],
+                set_={
+                    'module': stmt.excluded.module,
+                    'status': stmt.excluded.status,
+                    'missing_fields': stmt.excluded.missing_fields,
+                    'confidence': stmt.excluded.confidence,
+                    'llm_provider_model': stmt.excluded.llm_provider_model,
+                    'validated_at': text('now()') 
+                }
+            )
+            db.execute(update_stmt)
             db.commit()
         finally:
             db.close()
-
-    def process_knowledge_upload(self, df: pd.DataFrame) -> dict:
-        db = self.SessionLocal()
-        try:
-            processed_count = 0
-            upserted_count = 0
             
+    def upsert_knowledge_from_dataframe(self, df: pd.DataFrame) -> dict:
+        db = self.SessionLocal()
+        processed_count = 0
+        upserted_count = 0
+        try:
             for _, row in df.iterrows():
+                processed_count += 1
                 module_name = row['module_name']
                 field_name = row['field_name']
-                processed_count += 1
 
                 module_stmt = select(ModulesTaxonomy).where(ModulesTaxonomy.module_name == module_name)
                 module = db.execute(module_stmt).scalar_one_or_none()
                 if not module:
-                    print(f"Creating new module: {module_name}")
-                    module = ModulesTaxonomy(module_name=module_name, description=f"{module_name} process")
+                    module = ModulesTaxonomy(module_name=module_name, description=f"Module for {module_name}")
                     db.add(module)
-                    db.flush() 
-
+                    db.commit() 
+                    db.refresh(module)
+                    upserted_count += 1
+                
                 field_stmt = select(MandatoryFieldTemplates).where(
                     MandatoryFieldTemplates.module_id == module.id,
                     MandatoryFieldTemplates.field_name == field_name
                 )
                 field = db.execute(field_stmt).scalar_one_or_none()
                 if not field:
-                    print(f"Creating new field '{field_name}' for module '{module_name}'")
                     new_field = MandatoryFieldTemplates(module_id=module.id, field_name=field_name)
                     db.add(new_field)
                     upserted_count += 1
             
             db.commit()
-            print("Knowledge base update committed successfully.")
             return {"rows_processed": processed_count, "rows_upserted": upserted_count, "errors": []}
         except Exception as e:
             db.rollback()
@@ -91,8 +99,6 @@ class DatabaseService:
         finally:
             db.close()
 
-    # --- FINAL FEATURE ---
-    # New method to log the successful resolution.
     def log_resolution(self, ticket_key: str, solution: SynthesizedSolution):
         db = self.SessionLocal()
         try:
@@ -103,6 +109,60 @@ class DatabaseService:
             )
             db.add(log_entry)
             db.commit()
+        finally:
+            db.close()
+
+    # --- NEW METHOD FOR STATEFUL POLLING ---
+    def get_last_known_ticket_statuses(self, ticket_keys: List[str]) -> Dict[str, str]:
+        """
+        Queries the validations_log to get the most recent status for a list of tickets.
+        """
+        if not ticket_keys:
+            return {}
+        
+        db = self.SessionLocal()
+        try:
+            stmt = select(ValidationsLog.ticket_key, ValidationsLog.status).where(ValidationsLog.ticket_key.in_(ticket_keys))
+            results = db.execute(stmt).all()
+            # Returns a dictionary like {'LENS-1': 'complete', 'LENS-2': 'incomplete'}
+            return {row.ticket_key: row.status for row in results}
+        finally:
+            db.close()
+    
+    def get_last_validation_timestamp(self, ticket_key: str) -> Optional[str]:
+        """
+        Retrieves the timestamp of the last validation for a specific ticket.
+        Returns an ISO format timestamp string that can be compared with JIRA's updated field.
+        """
+        db = self.SessionLocal()
+        try:
+            stmt = select(ValidationsLog.validated_at).where(ValidationsLog.ticket_key == ticket_key)
+            result = db.execute(stmt).scalar_one_or_none()
+            if result:
+                # Convert to ISO format string for comparison with JIRA dates
+                return result.isoformat()
+            return None
+        finally:
+            db.close()
+    
+    def get_complete_tickets(self) -> List[Dict]:
+        """
+        Retrieves all tickets that have been validated as 'complete'.
+        This is used by the Admin UI to display the queue of tickets ready for resolution.
+        """
+        db = self.SessionLocal()
+        try:
+            stmt = select(ValidationsLog).where(ValidationsLog.status == "complete")
+            results = db.execute(stmt).scalars().all()
+            return [
+                {
+                    "ticket_key": log.ticket_key,
+                    "module": log.module,
+                    "confidence": log.confidence,
+                    "validated_at": log.validated_at.isoformat() if log.validated_at else None
+                }
+                for log in results
+            ]
         finally:
             db.close()
 

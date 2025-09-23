@@ -17,33 +17,45 @@ class ResolutionActivities:
         self.db_service = db_service
         
     @activity.defn
-    async def find_and_synthesize_solutions_activity(self, data: ResolutionInput) -> SynthesizedSolution:
+    async def find_and_synthesize_solutions_activity(self, data: ResolutionInput) -> Dict:
         """
-        Finds similar tickets and uses an LLM to synthesize a new solution.
+        Finds similar tickets and uses an LLM to synthesize multiple potential solutions.
+        Returns top 3 solutions to be presented in the Admin UI.
         """
         activity.logger.info(f"Resolution: Finding similar solutions for ticket {data.ticket_key}...")
         
         similar_tickets = self.rag_service.find_similar_solutions(
             query_text=data.ticket_bundled_text,
-            top_k=3
+            top_k=5  # Get more similar tickets to generate better solution alternatives
         )
 
         if not similar_tickets:
             activity.logger.warning(f"No similar tickets found for {data.ticket_key}.")
-            return SynthesizedSolution(
-                solution_text="I could not find any similar past issues in our knowledge base. This may be a new type of problem.",
-                llm_provider_model="system-generated"
-            )
+            return {
+                "solutions": [
+                    {
+                        "solution_text": "I could not find any similar past issues in our knowledge base. This may be a new type of problem.",
+                        "confidence": 0.0,
+                        "llm_provider_model": "system-generated",
+                        "sources": []
+                    }
+                ],
+                "ticket_context": data.ticket_bundled_text
+            }
 
         activity.logger.info(f"Found {len(similar_tickets)} similar tickets in the database.")
         
-        # The LLM service now directly returns a SynthesizedSolution object
-        solution = self.llm_service.synthesize_solutions(
+        # Modified to get multiple solution alternatives
+        solutions = self.llm_service.generate_solution_alternatives(
             ticket_context=data.ticket_bundled_text,
-            ranked_solutions=similar_tickets
+            ranked_solutions=similar_tickets,
+            num_alternatives=3
         )
         
-        return solution
+        return {
+            "solutions": solutions,
+            "ticket_context": data.ticket_bundled_text
+        }
 
     @activity.defn
     async def post_solution_to_jira_activity(self, ticket_key: str, solution: SynthesizedSolution) -> str:

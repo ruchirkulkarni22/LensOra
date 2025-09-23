@@ -37,4 +37,14 @@ class ResolutionInput:
 class SynthesizedSolution:
     solution_text: str
     llm_provider_model: str
+    confidence: float = 0.0
+    sources: List[str] = field(default_factory=list)
+
+@dataclass
+class SolutionAlternative:
+    """Represents one of several possible solutions to present to the user."""
+    solution_text: str
+    confidence: float
+    llm_provider_model: str
+    sources: List[Dict] = field(default_factory=list)
 

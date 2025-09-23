@@ -1,16 +1,24 @@
 # File: backend/api/routes.py
-from fastapi import APIRouter, HTTPException, status, UploadFile, File, Request
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Request, Body, Path
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from backend.config import settings
 from backend.workflows.shared import TicketValidationInput
 from backend.services.db_service import db_service
-from .schemas import KnowledgeUploadResponse, JiraWebhookPayload, SolvedTicketsUploadResponse
+from .schemas import (
+    KnowledgeUploadResponse, 
+    JiraWebhookPayload, 
+    SolvedTicketsUploadResponse,
+    CompleteTicket,
+    Solution,
+    SolutionApproval
+)
 from backend.services.polling_service import polling_service
 # --- FEATURE 2.2 ENHANCEMENT ---
 from backend.services.rag_service import rag_service
 import pandas as pd
 import io
+from typing import List, Dict
 
 router = APIRouter(prefix="/api")
 
@@ -141,5 +149,117 @@ async def trigger_validation(ticket_key: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to start workflow: {str(e)}",
+        )
+
+# --- ADMIN UI ENDPOINTS ---
+
+@router.get("/complete-tickets", status_code=status.HTTP_200_OK)
+async def get_complete_tickets():
+    """
+    API endpoint for the Admin UI to retrieve all tickets that have been validated as 'complete'.
+    These are tickets that are ready for human resolution.
+    """
+    try:
+        complete_tickets = db_service.get_complete_tickets()
+        return {"tickets": complete_tickets}
+    except Exception as e:
+        print(f"ERROR getting complete tickets: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get complete tickets: {str(e)}",
+        )
+
+@router.post("/generate-solutions/{ticket_key}", status_code=status.HTTP_202_ACCEPTED)
+async def generate_solutions(ticket_key: str):
+    """
+    API endpoint for the Admin UI to generate solution alternatives for a specific ticket.
+    This will be called when a human resolver selects a ticket from the queue.
+    """
+    try:
+        # Get the ticket details from JIRA
+        from backend.services.jira_client import jira_service
+        
+        # Local imports to avoid circular dependencies
+        from backend.workflows.shared import ResolutionInput
+        
+        # Get the ticket details from our database or JIRA
+        details = jira_service.get_ticket_details(ticket_key)
+        
+        text_parts = [
+            f"Ticket Key: {ticket_key}",
+            f"Summary: {details.get('summary', '')}",
+            f"Description: {details.get('description', '')}"
+        ]
+        bundled_text = "\n".join(text_parts)
+        
+        client = await Client.connect(
+            f"{settings.TEMPORAL_HOST}:{settings.TEMPORAL_PORT}",
+            namespace=settings.TEMPORAL_NAMESPACE,
+        )
+        
+        resolution_input = ResolutionInput(
+            ticket_key=ticket_key,
+            ticket_bundled_text=bundled_text
+        )
+        
+        # Start the FindResolutionWorkflow to generate solution alternatives
+        handle = await client.start_workflow(
+            "FindResolutionWorkflow",
+            resolution_input,
+            id=f"find-resolution-{ticket_key}",
+            task_queue="lensora-task-queue",
+            id_reuse_policy=WorkflowIDReusePolicy.TERMINATE_IF_RUNNING,
+        )
+        
+        # Wait for the result (this is synchronous)
+        result = await handle.result()
+        
+        return {
+            "status": "success",
+            "ticket_key": ticket_key,
+            "solutions": result["solutions"],
+            "ticket_context": result["ticket_context"]
+        }
+    except Exception as e:
+        print(f"ERROR generating solutions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate solutions: {str(e)}",
+        )
+        
+@router.post("/post-solution/{ticket_key}", status_code=status.HTTP_202_ACCEPTED)
+async def post_solution(ticket_key: str = Path(...), solution: SolutionApproval = Body(...)):
+    """
+    API endpoint for the Admin UI to post a human-approved solution to JIRA.
+    This will be called when a human resolver selects a solution from the alternatives.
+    """
+    try:
+        client = await Client.connect(
+            f"{settings.TEMPORAL_HOST}:{settings.TEMPORAL_PORT}",
+            namespace=settings.TEMPORAL_NAMESPACE,
+        )
+        
+        # Convert the Pydantic model to a dictionary
+        solution_dict = solution.model_dump()
+        
+        # Start the PostResolutionWorkflow to post the solution to JIRA
+        await client.start_workflow(
+            "PostResolutionWorkflow",
+            [ticket_key, solution_dict],
+            id=f"post-resolution-{ticket_key}",
+            task_queue="lensora-task-queue",
+            id_reuse_policy=WorkflowIDReusePolicy.TERMINATE_IF_RUNNING,
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Solution posted to JIRA ticket {ticket_key} successfully.",
+            "workflow_id": f"post-resolution-{ticket_key}"
+        }
+    except Exception as e:
+        print(f"ERROR posting solution: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to post solution: {str(e)}",
         )
 

@@ -5,7 +5,7 @@ from temporalio.worker import Worker
 
 from backend.config import settings
 from backend.workflows.validate_ticket import ValidateTicketWorkflow
-from backend.workflows.find_resolution import FindResolutionWorkflow
+from backend.workflows.find_resolution import FindResolutionWorkflow, PostResolutionWorkflow
 from backend.workflows.activities import ValidationActivities
 from backend.workflows.resolution_activities import ResolutionActivities
 
@@ -24,13 +24,14 @@ async def main():
     worker = Worker(
         client,
         task_queue="lensora-task-queue",
-        workflows=[ValidateTicketWorkflow, FindResolutionWorkflow],
+        workflows=[ValidateTicketWorkflow, FindResolutionWorkflow, PostResolutionWorkflow],
         activities=[
             # Validation Activities
             validation_activities.fetch_and_bundle_ticket_context_activity,
             validation_activities.get_llm_verdict_activity,
             validation_activities.comment_and_reassign_activity,
             validation_activities.log_validation_result_activity,
+            validation_activities.notify_ticket_in_queue_activity,
             
             # Resolution Activities
             resolution_activities.find_and_synthesize_solutions_activity,

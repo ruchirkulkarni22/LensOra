@@ -15,7 +15,11 @@ class JiraService:
         self.client = JIRA(
             server=settings.JIRA_URL,
             basic_auth=(settings.JIRA_USERNAME, settings.JIRA_API_TOKEN),
-            options={'headers': {'Accept': 'application/json'}}
+            options={
+                'headers': {'Accept': 'application/json'},
+                # Add timeout settings to prevent indefinite hanging
+                'timeout': 30  # 30 seconds timeout
+            }
         )
 
     def get_ticket_details(self, ticket_key: str) -> dict:

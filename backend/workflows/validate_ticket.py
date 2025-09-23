@@ -48,20 +48,20 @@ class ValidateTicketWorkflow:
                 return f"Workflow complete. Status: Incomplete. {result_message} (no reporter to reassign)."
 
         elif llm_verdict.validation_status == "complete":
-            workflow.logger.info(f"Verdict for {input_data.ticket_key}: COMPLETE. Starting Resolution Workflow...")
+            workflow.logger.info(f"Verdict for {input_data.ticket_key}: COMPLETE. This ticket is ready for human review.")
             
-            resolution_input = ResolutionInput(
-                ticket_key=input_data.ticket_key,
-                ticket_bundled_text=ticket_context.bundled_text
-            )
-
-            resolution_result = await workflow.execute_child_workflow(
-                FindResolutionWorkflow.run,
-                resolution_input,
-                id=f"find-resolution-{input_data.ticket_key}"
+            # Note: We no longer automatically start the resolution workflow here.
+            # Instead, the ticket is now marked as 'complete' in the database,
+            # and will be displayed in the Admin UI queue for human review.
+            
+            # Add a comment to the ticket informing the reporter that the ticket is being processed
+            result_message = await workflow.execute_activity(
+                "notify_ticket_in_queue_activity",
+                args=[input_data.ticket_key],
+                **activity_options
             )
             
-            return f"Workflow complete. Status: Complete. {resolution_result}"
+            return f"Workflow complete. Status: Complete. Ticket is ready for human review in the Admin UI."
         
         else:
             workflow.logger.error(f"LLM returned an error status for {input_data.ticket_key}.")

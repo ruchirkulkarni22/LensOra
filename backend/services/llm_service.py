@@ -102,6 +102,70 @@ class LLMService:
             solution_text=f"Could not generate a solution. All LLM providers failed. Last error: {last_error}",
             llm_provider_model="all_failed"
         )
+    
+    # --- NEW METHOD FOR FEATURE 2 ---
+    # Generates multiple alternative solutions for human review
+    def generate_solution_alternatives(self, ticket_context: str, ranked_solutions: List[Dict], num_alternatives: int = 3) -> List[Dict]:
+        """
+        Generates multiple alternative solutions for a ticket using different approaches.
+        Returns a list of solution alternatives to be displayed in the Admin UI.
+        """
+        # Group historical solutions by different perspectives to get diverse solutions
+        solutions_by_approach = [
+            ranked_solutions[:2],  # Top 2 most similar tickets
+            ranked_solutions[2:4] if len(ranked_solutions) > 2 else ranked_solutions[:1], # Next most similar
+            ranked_solutions[-2:] if len(ranked_solutions) > 4 else ranked_solutions[:1]  # Different perspective
+        ]
+        
+        alternatives = []
+        prompt_templates = [
+            "Focus on step-by-step troubleshooting for the user",
+            "Focus on the most direct solution path based on similar cases",
+            "Focus on explaining the root cause and how to prevent this in the future"
+        ]
+        
+        model_name = self.model_fallback_chain[0]  # Use the first model in the chain for all alternatives
+        
+        try:
+            client = self._get_client(model_name)
+            
+            for i in range(min(num_alternatives, len(prompt_templates))):
+                try:
+                    # Create a specialized prompt for this alternative
+                    approach_prompt = self._build_alternative_solution_prompt(
+                        ticket_context, 
+                        solutions_by_approach[i], 
+                        prompt_templates[i]
+                    )
+                    content_parts = [approach_prompt]
+                    
+                    # Get the response
+                    response_text = self._make_api_call(client, model_name, content_parts)
+                    
+                    # Calculate a confidence score (we'll use a simple heuristic)
+                    confidence = 0.9 - (i * 0.1)  # First alternative has highest confidence
+                    
+                    alternatives.append({
+                        "solution_text": response_text,
+                        "confidence": confidence,
+                        "llm_provider_model": model_name,
+                        "sources": [{"key": ticket["ticket_key"], "summary": ticket["summary"]} for ticket in solutions_by_approach[i]]
+                    })
+                except Exception as e:
+                    print(f"Failed to generate alternative {i+1}: {e}")
+        except Exception as e:
+            print(f"Failed to initialize LLM client: {e}")
+            
+        # If we couldn't generate any alternatives, provide a fallback
+        if not alternatives:
+            alternatives.append({
+                "solution_text": "Could not generate solution alternatives. Please check the system logs.",
+                "confidence": 0.0,
+                "llm_provider_model": "fallback",
+                "sources": []
+            })
+            
+        return alternatives
 
 
     def _build_validation_prompt(self, ticket_text_bundle: str, module_knowledge: dict) -> str:
@@ -153,6 +217,37 @@ class LLMService:
         2.  Analyze the 'Historical Solutions' provided. These are from past tickets that were similar.
         3.  Synthesize the information into a clear, step-by-step guide or a set of questions to help the user solve their problem.
         4.  IMPORTANT: Do not just copy the old resolutions. Combine the ideas. If the historical solutions all point to a common root cause (e.g., a locked account), state that as the likely problem.
+        5.  Keep your response concise and professional. Start with a polite opening.
+        
+        ---
+        **New JIRA Ticket**
+        ```text
+        {ticket_context}
+        ```
+        ---
+        **Historical Solutions**
+        ```text
+        {solutions_str}
+        ```
+        ---
+        **Your Recommended Solution**
+        """
+        
+    def _build_alternative_solution_prompt(self, ticket_context: str, ranked_solutions: List[Dict], approach_focus: str) -> str:
+        solutions_str = "\n\n---\n\n".join([
+            f"**Ticket:** {sol['ticket_key']}\n**Summary:** {sol['summary']}\n**Resolution:** {sol['resolution']}"
+            for sol in ranked_solutions
+        ])
+        
+        return f"""
+        **System Preamble**
+        You are an expert AI agent for Oracle ERP systems. Your task is to act as a helpful senior support engineer. You will be given a new JIRA ticket and a list of historical tickets that are similar. Your goal is to synthesize the historical resolutions into a concise, actionable set of recommendations for the new ticket.
+
+        **Instructions**
+        1.  Carefully read the 'New JIRA Ticket'.
+        2.  Analyze the 'Historical Solutions' provided. These are from past tickets that were similar.
+        3.  Synthesize the information into a clear, step-by-step guide or a set of questions to help the user solve their problem.
+        4.  IMPORTANT: {approach_focus}
         5.  Keep your response concise and professional. Start with a polite opening.
         
         ---
