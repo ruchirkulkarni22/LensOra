@@ -69,8 +69,6 @@ class ValidationActivities:
     async def log_validation_result_activity(self, ticket_key: str, verdict: LLMVerdict) -> str:
         activity.logger.info(f"Logging validation verdict for {ticket_key}...")
         try:
-            # --- FLAWLESS FIX ---
-            # Corrected the method name from log_validation_verdict to log_validation_result
             self.db_service.log_validation_result(ticket_key, verdict)
             message = f"Successfully logged validation verdict for {ticket_key} using model {verdict.llm_provider_model}."
             activity.logger.info(message)
@@ -78,7 +76,6 @@ class ValidationActivities:
         except Exception as e:
             error_message = f"Failed to log validation verdict for {ticket_key}. Error: {e}"
             activity.logger.error(error_message)
-            # We will not raise the exception to avoid failing the whole workflow
             return error_message
 
     @activity.defn
@@ -97,6 +94,18 @@ class ValidationActivities:
             activity.logger.warning(f"No reporter found for ticket {ticket_key}. Adding comment only.")
             self.jira_service.add_comment(ticket_key, message)
             return f"Ticket {ticket_key} commented on successfully (no reassignment)."
+        
+        try:
+            self.jira_service.comment_and_reassign(
+                ticket_key=ticket_key,
+                comment=message,
+                assignee_id=reporter_id
+            )
+            return f"Ticket {ticket_key} commented on and reassigned to reporter."
+        except JIRAError as e:
+            activity.logger.error(f"Failed to reassign ticket {ticket_key}, falling back to comment-only. Error: {e}")
+            self.jira_service.add_comment(ticket_key, message)
+            return f"Ticket {ticket_key} commented on, but reassignment failed."
             
     @activity.defn
     async def notify_ticket_in_queue_activity(self, ticket_key: str) -> str:
@@ -118,16 +127,4 @@ class ValidationActivities:
             error_message = f"Failed to notify ticket {ticket_key}. Error: {e}"
             activity.logger.error(error_message)
             return error_message
-
-        try:
-            self.jira_service.comment_and_reassign(
-                ticket_key=ticket_key,
-                comment=message,
-                assignee_id=reporter_id
-            )
-            return f"Ticket {ticket_key} commented on and reassigned to reporter."
-        except JIRAError as e:
-            activity.logger.error(f"Failed to reassign ticket {ticket_key}, falling back to comment-only. Error: {e}")
-            self.jira_service.add_comment(ticket_key, message)
-            return f"Ticket {ticket_key} commented on, but reassignment failed."
 

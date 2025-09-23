@@ -15,15 +15,31 @@ ENV/
 *.log
 pip-log.txt
 pip-delete-this-directory.txt
+.python-version
+__pypackages__/
+poetry.lock
 
 # Distribution / packaging
 dist/
 build/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
 # Unit test / coverage reports
 htmlcov/
 .tox/
+.nox/
 .coverage
 .coverage.*
 .cache
@@ -32,6 +48,7 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+pytest-report.xml
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -39,9 +56,15 @@ coverage.xml
 # VS Code
 .vscode/
 *.code-workspace
+.history/
 
 # PyCharm
 .idea/
+*.iml
+*.iws
+*.ipr
+out/
+.idea_modules/
 
 # macOS
 .DS_Store
@@ -56,6 +79,9 @@ Icon
 .Trashes
 .VolumeIcon.icns
 .com.apple.timemachine.donotpresent
+.DS_Store?
+.Trash-*
+.Trashes
 
 # Docker
 .docker/
@@ -64,8 +90,12 @@ docker-compose.override.yml
 # Database
 *.sqlite3
 *.db
-*.sql
 *.dump
+
+# SQL - excluding migration scripts
+*.sql
+# But keep specific SQL files we need
+!cleanup_duplicates.sql
 
 # Temporal
 temporal/
@@ -77,9 +107,33 @@ temporal/
 !migrations/env.py
 !migrations/script.py.mako
 
+# Node.js / Frontend
+node_modules/
+npm-debug.log
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
+.node_repl_history
+.yarn-integrity
+.env.development.local
+.env.test.local
+.env.production.local
+.pnp.*
+.pnp/
+.yarn/
+.cache/
+public/bundle.js
+public/bundle.js.map
+
 # Project specific
 data/temp/
 logs/
 uploads/
 downloads/
 temp/
+.secrets/
+*.pem
+*.key
+*.cert
+.credentials/

@@ -27,12 +27,6 @@ from backend.db.models import Base
 target_metadata = Base.metadata
 
 # REMOVED the line that was overriding the sqlalchemy.url
-# This will now use the URL directly from your alembic.ini file.
-
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
 
 
 def run_migrations_offline() -> None:

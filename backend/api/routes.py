@@ -14,7 +14,6 @@ from .schemas import (
     SolutionApproval
 )
 from backend.services.polling_service import polling_service
-# --- FEATURE 2.2 ENHANCEMENT ---
 from backend.services.rag_service import rag_service
 import pandas as pd
 import io
@@ -50,8 +49,6 @@ async def handle_jira_webhook(payload: JiraWebhookPayload, request: Request):
     return {"status": "received"}
 
 
-# --- FEATURE 2.2 ENHANCEMENT ---
-# New endpoint to upload the internal knowledge base of solved tickets.
 @router.post("/upload-solved-tickets", response_model=SolvedTicketsUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_solved_tickets(file: UploadFile = File(...)):
     """
@@ -105,7 +102,7 @@ async def upload_knowledge(file: UploadFile = File(...)):
         required_columns = {'module_name', 'field_name'}
         if not required_columns.issubset(df.columns):
             raise ValueError(f"File is missing one of the required columns: {required_columns}")
-        result = db_service.upsert_module_knowledge(df)
+        result = db_service.upsert_knowledge_from_dataframe(df)
         if result["errors"]:
             raise ValueError(f"Errors occurred during processing: {'; '.join(result['errors'])}")
         return KnowledgeUploadResponse(

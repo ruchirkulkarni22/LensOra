@@ -13,8 +13,7 @@ class KnowledgeUploadResponse(BaseModel):
     rows_upserted: int
     errors: List[str] = []
 
-# --- FEATURE 2.2 ENHANCEMENT ---
-# New response model for the solved tickets upload endpoint.
+
 class SolvedTicketsUploadResponse(BaseModel):
     filename: str
     status: str

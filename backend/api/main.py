@@ -1,5 +1,6 @@
 # File: backend/api/main.py
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 from . import routes
 # --- FEATURE 1.1.5 ENHANCEMENT ---
@@ -11,9 +12,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# --- FEATURE 1.1.5 ENHANCEMENT ---
-# This event handler will run when the FastAPI application starts.
-# It creates a background task to run our polling service indefinitely.
+# Add CORS middleware to allow frontend to communicate with backend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.on_event("startup")
 async def startup_event():
     print("Application startup: Creating background task for JIRA polling.")
