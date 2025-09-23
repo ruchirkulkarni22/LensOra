@@ -112,11 +112,7 @@ class DatabaseService:
         finally:
             db.close()
 
-    # --- NEW METHOD FOR STATEFUL POLLING ---
     def get_last_known_ticket_statuses(self, ticket_keys: List[str]) -> Dict[str, str]:
-        """
-        Queries the validations_log to get the most recent status for a list of tickets.
-        """
         if not ticket_keys:
             return {}
         
@@ -124,35 +120,25 @@ class DatabaseService:
         try:
             stmt = select(ValidationsLog.ticket_key, ValidationsLog.status).where(ValidationsLog.ticket_key.in_(ticket_keys))
             results = db.execute(stmt).all()
-            # Returns a dictionary like {'LENS-1': 'complete', 'LENS-2': 'incomplete'}
             return {row.ticket_key: row.status for row in results}
         finally:
             db.close()
     
     def get_last_validation_timestamp(self, ticket_key: str) -> Optional[str]:
-        """
-        Retrieves the timestamp of the last validation for a specific ticket.
-        Returns an ISO format timestamp string that can be compared with JIRA's updated field.
-        """
         db = self.SessionLocal()
         try:
             stmt = select(ValidationsLog.validated_at).where(ValidationsLog.ticket_key == ticket_key)
             result = db.execute(stmt).scalar_one_or_none()
             if result:
-                # Convert to ISO format string for comparison with JIRA dates
                 return result.isoformat()
             return None
         finally:
             db.close()
     
     def get_complete_tickets(self) -> List[Dict]:
-        """
-        Retrieves all tickets that have been validated as 'complete'.
-        This is used by the Admin UI to display the queue of tickets ready for resolution.
-        """
         db = self.SessionLocal()
         try:
-            stmt = select(ValidationsLog).where(ValidationsLog.status == "complete")
+            stmt = select(ValidationsLog).where(ValidationsLog.status == "complete").order_by(ValidationsLog.validated_at.desc())
             results = db.execute(stmt).scalars().all()
             return [
                 {
@@ -166,6 +152,27 @@ class DatabaseService:
         finally:
             db.close()
 
+    # --- NEW METHOD FOR UI ENHANCEMENT ---
+    def get_incomplete_tickets(self) -> List[Dict]:
+        """
+        Retrieves all tickets that have been validated as 'incomplete' for the UI.
+        """
+        db = self.SessionLocal()
+        try:
+            stmt = select(ValidationsLog).where(ValidationsLog.status == "incomplete").order_by(ValidationsLog.validated_at.desc())
+            results = db.execute(stmt).scalars().all()
+            return [
+                {
+                    "ticket_key": log.ticket_key,
+                    "module": log.module,
+                    "missing_fields": log.missing_fields,
+                    "validated_at": log.validated_at.isoformat() if log.validated_at else None,
+                    "llm_provider_model": log.llm_provider_model
+                }
+                for log in results
+            ]
+        finally:
+            db.close()
+
 
 db_service = DatabaseService()
-

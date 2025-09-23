@@ -1,5 +1,6 @@
 # File: backend/api/routes.py
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Request, Body, Path
+from fastapi.responses import StreamingResponse
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from backend.config import settings
@@ -9,17 +10,44 @@ from .schemas import (
     KnowledgeUploadResponse, 
     JiraWebhookPayload, 
     SolvedTicketsUploadResponse,
-    CompleteTicket,
-    Solution,
     SolutionApproval
 )
 from backend.services.polling_service import polling_service
 from backend.services.rag_service import rag_service
 import pandas as pd
 import io
+import asyncio
 from typing import List, Dict
+# --- FIX: Import polling logs from the new shared_state module ---
+from .shared_state import POLLING_LOGS 
 
 router = APIRouter(prefix="/api")
+
+# --- NEW: Server-Sent Events endpoint for live polling logs ---
+@router.get("/polling-logs")
+async def get_polling_logs(request: Request):
+    """
+    Streams polling service logs to the frontend using Server-Sent Events (SSE).
+    """
+    async def event_generator():
+        last_sent_index = 0
+        while True:
+            # Check if client has disconnected
+            if await request.is_disconnected():
+                print("Client disconnected from polling logs stream.")
+                break
+
+            # If there are new logs, send them
+            if len(POLLING_LOGS) > last_sent_index:
+                for i in range(last_sent_index, len(POLLING_LOGS)):
+                    log_entry = POLLING_LOGS[i]
+                    yield f"data: {log_entry}\n\n"
+                last_sent_index = len(POLLING_LOGS)
+            
+            await asyncio.sleep(1)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 @router.post("/jira-webhook", status_code=status.HTTP_200_OK)
 async def handle_jira_webhook(payload: JiraWebhookPayload, request: Request):
@@ -27,6 +55,8 @@ async def handle_jira_webhook(payload: JiraWebhookPayload, request: Request):
     Listens for issue_created and issue_updated events from JIRA
     and triggers the validation workflow.
     """
+    # This logic remains unchanged
+    # ... (existing code)
     print(f"Received JIRA webhook for event: {payload.webhook_event}")
     if payload.webhook_event in ["jira:issue_created", "jira:issue_updated"]:
         ticket_key = payload.issue.key
@@ -51,10 +81,6 @@ async def handle_jira_webhook(payload: JiraWebhookPayload, request: Request):
 
 @router.post("/upload-solved-tickets", response_model=SolvedTicketsUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_solved_tickets(file: UploadFile = File(...)):
-    """
-    Allows an admin to upload a CSV/Excel file containing previously solved
-    JIRA tickets to be used as an internal knowledge base.
-    """
     if not file.filename.endswith(('.csv', '.xlsx')):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -89,10 +115,6 @@ async def upload_solved_tickets(file: UploadFile = File(...)):
 
 @router.post("/upload-knowledge", response_model=KnowledgeUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_knowledge(file: UploadFile = File(...)):
-    """
-    Allows an admin to upload a CSV or Excel file to update the agent's
-    knowledge base of modules and mandatory fields.
-    """
     if not file.filename.endswith(('.csv', '.xlsx')):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file format.")
     try:
@@ -120,9 +142,6 @@ async def upload_knowledge(file: UploadFile = File(...)):
 
 @router.post("/trigger-validation/{ticket_key}", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_validation(ticket_key: str):
-    """
-    API endpoint to manually trigger the ticket validation workflow.
-    """
     try:
         client = await Client.connect(
             f"{settings.TEMPORAL_HOST}:{settings.TEMPORAL_PORT}",
@@ -152,10 +171,6 @@ async def trigger_validation(ticket_key: str):
 
 @router.get("/complete-tickets", status_code=status.HTTP_200_OK)
 async def get_complete_tickets():
-    """
-    API endpoint for the Admin UI to retrieve all tickets that have been validated as 'complete'.
-    These are tickets that are ready for human resolution.
-    """
     try:
         complete_tickets = db_service.get_complete_tickets()
         return {"tickets": complete_tickets}
@@ -166,12 +181,24 @@ async def get_complete_tickets():
             detail=f"Failed to get complete tickets: {str(e)}",
         )
 
+# --- NEW: Endpoint to fetch incomplete tickets ---
+@router.get("/incomplete-tickets", status_code=status.HTTP_200_OK)
+async def get_incomplete_tickets():
+    """
+    API endpoint for the Admin UI to retrieve all tickets that have been validated as 'incomplete'.
+    """
+    try:
+        incomplete_tickets = db_service.get_incomplete_tickets()
+        return {"tickets": incomplete_tickets}
+    except Exception as e:
+        print(f"ERROR getting incomplete tickets: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get incomplete tickets: {str(e)}",
+        )
+
 @router.post("/generate-solutions/{ticket_key}", status_code=status.HTTP_202_ACCEPTED)
 async def generate_solutions(ticket_key: str):
-    """
-    API endpoint for the Admin UI to generate solution alternatives for a specific ticket.
-    This will be called when a human resolver selects a ticket from the queue.
-    """
     try:
         from backend.services.jira_client import jira_service
         from backend.workflows.shared import ResolutionInput
@@ -220,10 +247,6 @@ async def generate_solutions(ticket_key: str):
         
 @router.post("/post-solution/{ticket_key}", status_code=status.HTTP_202_ACCEPTED)
 async def post_solution(ticket_key: str = Path(...), solution: SolutionApproval = Body(...)):
-    """
-    API endpoint for the Admin UI to post a human-approved solution to JIRA.
-    This will be called when a human resolver selects a solution from the alternatives.
-    """
     try:
         client = await Client.connect(
             f"{settings.TEMPORAL_HOST}:{settings.TEMPORAL_PORT}",
@@ -232,9 +255,6 @@ async def post_solution(ticket_key: str = Path(...), solution: SolutionApproval 
         
         solution_dict = solution.model_dump()
         
-        # --- FLAWLESS FIX ---
-        # The arguments must be passed separately to the workflow, not as a single list.
-        # This resolves the `TypeError: missing 1 required positional argument` error.
         await client.start_workflow(
             "PostResolutionWorkflow",
             args=[ticket_key, solution_dict],
@@ -254,3 +274,4 @@ async def post_solution(ticket_key: str = Path(...), solution: SolutionApproval 
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to post solution: {str(e)}",
         )
+
