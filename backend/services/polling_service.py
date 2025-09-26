@@ -1,5 +1,6 @@
 # File: backend/services/polling_service.py
 import asyncio
+import os
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from backend.config import settings
@@ -37,8 +38,13 @@ class PollingService:
             while retry_count < max_retries:
                 try:
                     self._log(f"Connecting to Temporal (attempt {retry_count + 1}/{max_retries})...")
+                    # Use localhost when running locally and not inside Docker
+                    host = settings.TEMPORAL_HOST
+                    if host == "temporal" and os.environ.get("DOCKER_ENV") != "true":
+                        host = "localhost"
+                    self._log(f"Connecting to Temporal at {host}:{settings.TEMPORAL_PORT}")
                     self.temporal_client = await Client.connect(
-                        f"{settings.TEMPORAL_HOST}:{settings.TEMPORAL_PORT}",
+                        f"{host}:{settings.TEMPORAL_PORT}",
                         namespace=settings.TEMPORAL_NAMESPACE
                     )
                     self._log("✅ Temporal client connected for polling.")

@@ -1,5 +1,6 @@
 # File: backend/worker.py
 import asyncio
+import os
 from temporalio.client import Client
 from temporalio.worker import Worker
 
@@ -12,8 +13,13 @@ from backend.workflows.resolution_activities import ResolutionActivities
 
 async def main():
     print("Connecting to Temporal server...")
+    host = settings.TEMPORAL_HOST
+    # Use localhost when running locally and not inside Docker
+    if host == "temporal" and os.environ.get("DOCKER_ENV") != "true":
+        host = "localhost"
+    print(f"Connecting to Temporal at {host}:{settings.TEMPORAL_PORT}")
     client = await Client.connect(
-        f"{settings.TEMPORAL_HOST}:{settings.TEMPORAL_PORT}",
+        f"{host}:{settings.TEMPORAL_PORT}",
         namespace=settings.TEMPORAL_NAMESPACE
     )
     print("Temporal client connected.")
