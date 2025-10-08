@@ -13,15 +13,25 @@ class PollingService:
     def __init__(self):
         self.interval_minutes = 5
         self.temporal_client: Client | None = None
-        self.jql_query = 'project = LENS'
+        from backend.config import settings as _s
+        project_key = getattr(_s, 'JIRA_PROJECT_KEY', None) or os.getenv('JIRA_PROJECT_KEY', 'LENS')
+        self.jql_query = f'project = {project_key}'
         self.log_deque: deque = None
+        # Buffer logs emitted before the deque is attached (FastAPI startup timing)
+        self._pending_logs: list[str] = []
         
         # Initial message to confirm service is ready
         self._initial_log(f"Polling service initialized. Query: '{self.jql_query}'")
 
     def _initial_log(self, message: str):
-         # This is a simple print for the initial setup before the deque is passed
-         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+        """Log during service construction; if deque not yet available, buffer it."""
+        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        formatted = f"[{ts}] {message}"
+        print(formatted)
+        if self.log_deque is not None:
+            self.log_deque.append(formatted)
+        else:
+            self._pending_logs.append(formatted)
 
     def _log(self, message: str):
         """Logs a message to both the console and the shared deque for SSE."""
@@ -30,6 +40,9 @@ class PollingService:
         print(log_entry)
         if self.log_deque is not None:
             self.log_deque.append(log_entry)
+        else:
+            # Should be rare after startup; keep just in case
+            self._pending_logs.append(log_entry)
 
     async def _ensure_client_connected(self):
         if self.temporal_client is None:
@@ -39,13 +52,10 @@ class PollingService:
                 try:
                     self._log(f"Connecting to Temporal (attempt {retry_count + 1}/{max_retries})...")
                     # Use localhost when running locally and not inside Docker
-                    host = settings.TEMPORAL_HOST
-                    if host == "temporal" and os.environ.get("DOCKER_ENV") != "true":
-                        host = "localhost"
-                    self._log(f"Connecting to Temporal at {host}:{settings.TEMPORAL_PORT}")
+                    self._log(f"Connecting to Temporal at {settings.TEMPORAL_ADDRESS}")
                     self.temporal_client = await Client.connect(
-                        f"{host}:{settings.TEMPORAL_PORT}",
-                        namespace=settings.TEMPORAL_NAMESPACE
+                        settings.TEMPORAL_ADDRESS,
+                        namespace=settings.TEMPORAL_NAMESPACE,
                     )
                     self._log("✅ Temporal client connected for polling.")
                     return
@@ -61,8 +71,18 @@ class PollingService:
     async def start_polling(self, log_deque: deque):
         """Main polling loop."""
         self.log_deque = log_deque
+        # Flush any pending logs collected before startup hook assigned the deque
+        if self._pending_logs:
+            for entry in self._pending_logs:
+                if len(self.log_deque) < self.log_deque.maxlen:
+                    self.log_deque.append(entry)
+            self._pending_logs.clear()
+
         self._log(f"✅ Starting JIRA polling service. Interval: {self.interval_minutes} minutes.")
-        
+
+        adaptive_min = 60  # 1 minute
+        adaptive_max = 600 # 10 minutes ceiling
+        base = self.interval_minutes * 60
         while True:
             self._log(f"--- Polling JIRA for ticket updates ---")
             try:
@@ -100,12 +120,12 @@ class PollingService:
                     
                     if last_status is None:
                         new_tickets.append(ticket_key)
-                    elif last_status == "incomplete":
+                    elif last_status == "incomplete" or last_status == "error":
                         last_jira_update_str = issue.fields.updated
                         last_db_validation_str = db_service.get_last_validation_timestamp(ticket_key)
                         
                         if not last_db_validation_str or last_jira_update_str > last_db_validation_str:
-                             self._log(f"WARN: Ticket {ticket_key} was updated. Re-validating.")
+                             self._log(f"WARN: Ticket {ticket_key} (status={last_status}) was updated or previously failed. Re-validating.")
                              incomplete_tickets_to_revalidate.append(ticket_key)
                 
                 self._log(f"Categorization complete. New: {len(new_tickets)}, To Re-validate: {len(incomplete_tickets_to_revalidate)}.")
@@ -127,8 +147,23 @@ class PollingService:
                     await asyncio.sleep(60)
                     continue
             
-            self._log(f"Polling cycle complete. Next poll in {self.interval_minutes} minutes.")
-            await asyncio.sleep(self.interval_minutes * 60)
+            # Adaptive sleep based on backlog size
+            try:
+                incomplete_count = db_service.count_incomplete()
+                if incomplete_count == 0:
+                    interval = base
+                elif incomplete_count < 5:
+                    interval = max(base * 0.6, adaptive_min)
+                elif incomplete_count < 15:
+                    interval = max(base * 0.4, adaptive_min)
+                else:
+                    interval = adaptive_min
+                interval = min(interval, adaptive_max)
+            except Exception:
+                interval = base
+            mins = round(interval / 60, 2)
+            self._log(f"Polling cycle complete. Next poll in {mins} minutes (adaptive).")
+            await asyncio.sleep(interval)
 
     async def trigger_workflow(self, ticket_key: str):
         try:
@@ -138,7 +173,7 @@ class PollingService:
                 "ValidateTicketWorkflow",
                 workflow_input,
                 id=f"validate-ticket-{ticket_key}",
-                task_queue="lensora-task-queue",
+                task_queue="assistiq-task-queue",
                 id_reuse_policy=WorkflowIDReusePolicy.TERMINATE_IF_RUNNING,
             )
             self._log(f"     ✅ Workflow triggered for {ticket_key}.")

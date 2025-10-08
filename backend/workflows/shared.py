@@ -25,11 +25,16 @@ class LLMVerdict:
     missing_fields: List[str] = field(default_factory=list)
     confidence: float = 0.0
     llm_provider_model: str = "unknown"
+    priority: str | None = None
+    is_vague: bool = False
+    vagueness_reason: str | None = None
+    duplicate_of: str | None = None
 
 @dataclass
 class ResolutionInput:
     ticket_key: str
     ticket_bundled_text: str
+    force_questions_only: bool = False  # if true we only generate clarification questions first
 
 # --- FINAL FEATURE ---
 # Add the model used to the solution dataclass for logging.
@@ -39,6 +44,8 @@ class SynthesizedSolution:
     llm_provider_model: str
     confidence: float = 0.0
     sources: List[str] = field(default_factory=list)
+    reasoning: str = ""
+    draft_id: int | None = None
 
 @dataclass
 class SolutionAlternative:

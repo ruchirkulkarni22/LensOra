@@ -13,13 +13,20 @@ class RAGService:
     embedding, storing, and retrieving knowledge from solved JIRA tickets.
     """
     def __init__(self):
-        print("Loading sentence embedding model...")
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        print("Sentence embedding model loaded.")
+        # Defer heavy model load until first use to speed API startup (prevents frontend proxy 502 windows)
+        self.embedding_model = None
+        self._model_name = 'all-MiniLM-L6-v2'
+        print("RAGService initialized. Embedding model will be loaded lazily on first request.")
+
+    def _ensure_model(self):
+        if self.embedding_model is None:
+            print(f"Loading sentence embedding model '{self._model_name}' (lazy)...")
+            self.embedding_model = SentenceTransformer(self._model_name)
+            print("Sentence embedding model loaded.")
 
     # --- FEATURE 2.3 ENHANCEMENT ---
     # New method to find the most relevant past solutions.
-    def find_similar_solutions(self, query_text: str, top_k: int = 3) -> List[Dict]:
+    def find_similar_solutions(self, query_text: str, top_k: int = 3, max_distance: float | None = 1.2) -> List[Dict]:
         """
         Generates an embedding for the query text and finds the 'top_k' most
         similar tickets from the database using vector similarity search.
@@ -27,6 +34,7 @@ class RAGService:
         db = db_service.SessionLocal()
         try:
             print(f"Generating embedding for query: '{query_text[:100]}...'")
+            self._ensure_model()
             query_embedding = self.embedding_model.encode(query_text)
 
             # pgvector provides the L2 distance operator (<->) for similarity search.
@@ -43,18 +51,49 @@ class RAGService:
             )
 
             results = db.execute(stmt).fetchall()
-            
-            similar_tickets = [
-                {
+
+            similar_tickets: List[Dict] = []
+            for row in results:
+                # Filter out semantically far tickets if threshold provided
+                if max_distance is not None and row.distance is not None and row.distance > max_distance:
+                    continue
+                similar_tickets.append({
                     "ticket_key": row.ticket_key,
                     "summary": row.summary,
                     "resolution": row.resolution,
                     "distance": row.distance
-                } for row in results
-            ]
+                })
             print(f"Found {len(similar_tickets)} similar tickets in the database.")
             return similar_tickets
 
+        finally:
+            db.close()
+
+    def find_potential_duplicate(self, query_text: str, threshold: float = 0.35) -> dict | None:
+        """Return a potential duplicate solved ticket if distance below threshold."""
+        db = db_service.SessionLocal()
+        try:
+            self._ensure_model()
+            emb = self.embedding_model.encode(query_text)
+            stmt = (
+                select(
+                    SolvedJiraTickets.ticket_key,
+                    SolvedJiraTickets.summary,
+                    SolvedJiraTickets.resolution,
+                    SolvedJiraTickets.embedding.l2_distance(emb).label('distance')
+                )
+                .order_by(text('distance'))
+                .limit(1)
+            )
+            row = db.execute(stmt).first()
+            if row and row.distance is not None and row.distance < threshold:
+                return {
+                    "ticket_key": row.ticket_key,
+                    "summary": row.summary,
+                    "resolution": row.resolution,
+                    "distance": row.distance
+                }
+            return None
         finally:
             db.close()
 
@@ -89,6 +128,7 @@ class RAGService:
 
             texts = [ticket['text_for_embedding'] for ticket in tickets_to_upsert]
             print(f"Generating embeddings for {len(texts)} tickets...")
+            self._ensure_model()
             embeddings = self.embedding_model.encode(texts, show_progress_bar=True)
             
             for i, ticket in enumerate(tickets_to_upsert):

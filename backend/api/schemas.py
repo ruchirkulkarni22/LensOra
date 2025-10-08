@@ -51,4 +51,5 @@ class SolutionApproval(BaseModel):
     """Request model for posting a human-approved solution."""
     solution_text: str
     llm_provider_model: Optional[str] = "human-approved"
+    draft_id: Optional[int] = None
 

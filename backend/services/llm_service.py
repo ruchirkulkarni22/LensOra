@@ -128,57 +128,79 @@ class LLMService:
         )
     
     def generate_solution_alternatives(self, ticket_context: str, ranked_solutions: List[Dict], num_alternatives: int = 3) -> List[Dict]:
-        solutions_by_approach = [
-            ranked_solutions[:2],
-            ranked_solutions[2:4] if len(ranked_solutions) > 2 else ranked_solutions[:1],
-            ranked_solutions[-2:] if len(ranked_solutions) > 4 else ranked_solutions[:1]
+        internal = [s for s in ranked_solutions if s.get('source_type') == 'internal']
+        external = [s for s in ranked_solutions if s.get('source_type') == 'external']
+
+        def cite_internal(sol: Dict) -> str:
+            if not sol.get('ticket_key'): return ''
+            return f"[INT:{sol['ticket_key']}] {sol['summary']} -> {sol['resolution'][:260]}"
+
+        def cite_external(sol: Dict, idx: int) -> str:
+            return f"[WEB:{idx+1}] {sol.get('title','External Source')} -> {sol.get('resolution','')[:260]}"
+
+        internal_block = "\n\n".join(filter(None, (cite_internal(s) for s in internal)))
+        external_block = "\n\n".join(cite_external(s, i) for i, s in enumerate(external))
+
+        base_context = (
+            "You are AssistIQ Resolution Agent. A new ticket is provided. Use internal and external sources with citations.\n"
+            "Ticket:\n" + ticket_context + "\n\n"
+            "INTERNAL HISTORICAL TICKETS (cite with [INT:<key>]):\n" + (internal_block or 'None') + "\n\n"
+            "EXTERNAL WEB SOURCES (cite with [WEB:<n>]):\n" + (external_block or 'None') + "\n\n"
+            "Instructions:\n"
+            "1. Every factual claim MUST cite one or more sources inline.\n"
+            "2. Provide actionable ordered steps.\n"
+            "3. If relying only on external, state internal knowledge gap.\n"
+            "4. Finish with a concise Summary: line."
+        )
+
+        approach_directives = [
+            "Emphasize step-by-step remediation.",
+            "Emphasize most probable root cause.",
+            "Emphasize prevention & optimization."
         ]
-        
-        alternatives = []
-        prompt_templates = [
-            "Focus on step-by-step troubleshooting for the user",
-            "Focus on the most direct solution path based on similar cases",
-            "Focus on explaining the root cause and how to prevent this in the future"
-        ]
-        
+
         model_name = self.model_fallback_chain[0]
-        
         try:
             client = self._get_client(model_name)
-            
-            for i in range(min(num_alternatives, len(prompt_templates))):
-                try:
-                    approach_prompt = self._build_alternative_solution_prompt(
-                        ticket_context, 
-                        solutions_by_approach[i], 
-                        prompt_templates[i]
-                    )
-                    content_parts = [approach_prompt]
-                    
-                    response_text = self._make_api_call(client, model_name, content_parts)
-                    
-                    confidence = 0.9 - (i * 0.1)
-                    
-                    alternatives.append({
-                        "solution_text": response_text,
-                        "confidence": confidence,
-                        "llm_provider_model": model_name,
-                        "sources": [{"key": ticket["ticket_key"], "summary": ticket["summary"]} for ticket in solutions_by_approach[i]]
-                    })
-                except Exception as e:
-                    print(f"Failed to generate alternative {i+1}: {e}")
         except Exception as e:
-            print(f"Failed to initialize LLM client: {e}")
-            
-        if not alternatives:
-            alternatives.append({
-                "solution_text": "Could not generate solution alternatives. Please check the system logs.",
-                "confidence": 0.0,
-                "llm_provider_model": "fallback",
-                "sources": []
+            print(f"LLM init failed: {e}")
+            return [{
+                'solution_text': 'LLM initialization failed.',
+                'confidence': 0.0,
+                'llm_provider_model': 'init_failed',
+                'sources': [],
+                'reasoning': 'Client init exception'
+            }]
+
+        results: List[Dict] = []
+        for i, directive in enumerate(approach_directives[:num_alternatives]):
+            try:
+                prompt = base_context + f"\n\nApproach Focus: {directive}\nCompose solution now:"
+                response_text = self._make_api_call(client, model_name, [prompt])
+                results.append({
+                    'solution_text': response_text,
+                    # Confidence now computed downstream using evidence metrics
+                    'confidence': 0.0,
+                    'llm_provider_model': model_name,
+                    'sources': (
+                        [{ 'key': s['ticket_key'], 'summary': s['summary']} for s in internal[:2]] +
+                        [{ 'key': s.get('title'), 'summary': s.get('summary')} for s in external[:2]]
+                    ),
+                    'reasoning': f"Directive: {directive}. Internal={len(internal)} External={len(external)}"
+                })
+            except Exception as e:
+                print(f"Generation failed ({i+1}): {e}")
+
+        if not results:
+            results.append({
+                'solution_text': 'No alternatives generated.',
+                'confidence': 0.0,
+                'llm_provider_model': model_name,
+                'sources': [],
+                'reasoning': 'All attempts failed'
             })
-            
-        return alternatives
+
+        return results
 
 
     def _build_validation_prompt(self, ticket_text_bundle: str, module_knowledge: dict) -> str:

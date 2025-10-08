@@ -26,6 +26,19 @@ class Settings:
     TEMPORAL_PORT = int(os.getenv("TEMPORAL_PORT", 7233))
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
 
+    @property
+    def TEMPORAL_ADDRESS(self) -> str:
+        """Return the resolved Temporal address taking local dev vs docker into account.
+
+        If the host is configured as 'temporal' (docker-compose service name) but we are
+        not inside a docker environment (DOCKER_ENV!=true), resolve to localhost so DNS
+        failures do not occur when running the API directly on the host machine.
+        """
+        host = self.TEMPORAL_HOST
+        if host == "temporal" and os.environ.get("DOCKER_ENV") != "true":
+            host = "localhost"
+        return f"{host}:{self.TEMPORAL_PORT}"
+
     # JIRA settings
     JIRA_URL = os.getenv("JIRA_URL")
     JIRA_USERNAME = os.getenv("JIRA_USERNAME")
@@ -35,6 +48,7 @@ class Settings:
     # LLM API Keys
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
     # --- FEATURE 1.1.3 ENHANCEMENT ---
     # Fallback chain for LLM providers. The service will try them in this order.

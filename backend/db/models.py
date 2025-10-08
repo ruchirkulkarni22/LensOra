@@ -31,6 +31,14 @@ class ValidationsLog(Base):
     confidence = Column(Float)
     llm_provider_model = Column(String)
     validated_at = Column(DateTime, server_default=func.now())
+    # Optional runtime-added columns (may not exist in initial migration)
+    # Use reflection-safe access; migrations should eventually formalize these.
+    # They are declared here for ORM attribute convenience.
+    # The actual DDL is executed at runtime in db_service._ensure_schema_extensions
+    # so absence in DB initially should be handled gracefully.
+    # NOTE: Some DBs may require Alembic migration for production.
+    duplicate_of = Column(String, nullable=True)
+    priority = Column(String, nullable=True)
 
 class SolvedJiraTickets(Base):
     __tablename__ = "solved_jira_tickets"
@@ -49,4 +57,31 @@ class ResolutionLog(Base):
     ticket_key = Column(String, index=True, nullable=False)
     solution_posted = Column(Text, nullable=False)
     llm_provider_model = Column(String)
+    resolved_at = Column(DateTime, server_default=func.now())
+    sources_json = Column(JSON)
+    reasoning_text = Column(Text)
+    # optional draft linkage
+    draft_id = Column(Integer, nullable=True)
+
+# --- External Web Search Augmentation ---
+class ExternalDocs(Base):
+    __tablename__ = "external_docs"
+    id = Column(Integer, primary_key=True, index=True)
+    url = Column(Text, unique=True, nullable=False, index=True)
+    domain = Column(String, index=True)
+    title = Column(Text)
+    content_text = Column(Text, nullable=False)
+    content_hash = Column(String(64), index=True, nullable=False)
+    embedding = Column(VECTOR(384))
+    fetched_at = Column(DateTime, server_default=func.now())
+    expires_at = Column(DateTime)
+
+class ExternalSearchAudit(Base):
+    __tablename__ = "external_search_audit"
+    id = Column(Integer, primary_key=True, index=True)
+    query_text = Column(Text, nullable=False)
+    normalized_query_hash = Column(String(64), index=True, nullable=False)
+    provider_used = Column(String(50))
+    result_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, server_default=func.now())
 

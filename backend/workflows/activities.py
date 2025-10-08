@@ -3,6 +3,10 @@ from temporalio import activity
 from jira.exceptions import JIRAError
 from backend.workflows.shared import TicketContext, LLMVerdict
 import json
+from backend.services.constants import AGENT_SIGNATURE
+from backend.services.priority_service import classify_priority
+from backend.services.compliance_filter import scrub as compliance_scrub
+from backend.services.rag_service import rag_service
 
 @activity.defn
 class ValidationActivities:
@@ -51,18 +55,43 @@ class ValidationActivities:
         activity.logger.info("Fetching module knowledge and sending context to LLM...")
         module_knowledge = self.db_service.get_all_modules_with_fields()
         
+        # Compliance scrub
+        scrubbed_text, redactions = compliance_scrub(ticket_context.bundled_text)
+        if redactions:
+            activity.logger.info(f"Compliance scrub applied: {redactions} redaction(s)")
         verdict_dict = self.llm_service.get_validation_verdict(
-            ticket_text_bundle=ticket_context.bundled_text,
+            ticket_text_bundle=scrubbed_text,
             module_knowledge=module_knowledge,
             image_attachments=ticket_context.image_attachments
         )
+
+        # Priority classification
+        priority, reason = classify_priority(None, ticket_context.bundled_text)
+        # Simple vagueness heuristic: very short or missing fields & low token diversity
+        words = set([w.lower() for w in ticket_context.bundled_text.split() if w.isalpha()])
+        is_vague = len(words) < 12 or ('error' in words and len(words) < 5)
+        if is_vague:
+            verdict_dict['is_vague'] = True
+            verdict_dict['vagueness_reason'] = 'Low information density'
+        verdict_dict['priority'] = priority
+        # Duplicate detection using solved tickets similarity
+        try:
+            duplicate = rag_service.find_potential_duplicate(ticket_context.bundled_text)
+            if duplicate:
+                verdict_dict['duplicate_of'] = duplicate['ticket_key']
+        except Exception as e:
+            activity.logger.warning(f"Duplicate detection failed: {e}")
         
         return LLMVerdict(
             module=verdict_dict.get("module", "Unknown"),
             validation_status=verdict_dict.get("validation_status", "error"),
             missing_fields=verdict_dict.get("missing_fields", []),
             confidence=verdict_dict.get("confidence", 0.0),
-            llm_provider_model=verdict_dict.get("llm_provider_model", "unknown")
+            llm_provider_model=verdict_dict.get("llm_provider_model", "unknown"),
+            priority=verdict_dict.get('priority'),
+            is_vague=verdict_dict.get('is_vague', False),
+            vagueness_reason=verdict_dict.get('vagueness_reason'),
+            duplicate_of=verdict_dict.get('duplicate_of')
         )
 
     @activity.defn
@@ -83,11 +112,9 @@ class ValidationActivities:
         missing_fields_str = ", ".join(verdict.missing_fields or [])
         message = (
             f"Hello,\n\n"
-            f"This ticket, identified for the '{verdict.module}' process, is currently incomplete. "
-            f"To proceed, please provide the following missing information:\n"
-            f"- {missing_fields_str}\n\n"
-            f"Please update the ticket with the required details. It has been assigned back to you for attention.\n\n"
-            f"Sincerely,\nLensOraAI Agent"
+            f"This ticket (module: {verdict.module}) is incomplete. Please add the missing field(s):\n"
+            f"- {missing_fields_str or 'None'}\n\n"
+            f"Once updated, the validation agent will re-check it automatically." + AGENT_SIGNATURE
         )
         
         if not reporter_id:
@@ -114,10 +141,8 @@ class ValidationActivities:
         """
         message = (
             f"Hello,\n\n"
-            f"Thank you for submitting this ticket with complete information. "
-            f"It has been validated by our system and is now in the queue for resolution. "
-            f"Our team will review and provide a solution shortly.\n\n"
-            f"Sincerely,\nLensOraAI Agent"
+            f"Your ticket has passed automated validation and entered the resolution queue. "
+            f"You will be notified when a proposed solution is posted." + AGENT_SIGNATURE
         )
         
         try:

@@ -13,14 +13,10 @@ from backend.workflows.resolution_activities import ResolutionActivities
 
 async def main():
     print("Connecting to Temporal server...")
-    host = settings.TEMPORAL_HOST
-    # Use localhost when running locally and not inside Docker
-    if host == "temporal" and os.environ.get("DOCKER_ENV") != "true":
-        host = "localhost"
-    print(f"Connecting to Temporal at {host}:{settings.TEMPORAL_PORT}")
+    print(f"Connecting to Temporal at {settings.TEMPORAL_ADDRESS}")
     client = await Client.connect(
-        f"{host}:{settings.TEMPORAL_PORT}",
-        namespace=settings.TEMPORAL_NAMESPACE
+        settings.TEMPORAL_ADDRESS,
+        namespace=settings.TEMPORAL_NAMESPACE,
     )
     print("Temporal client connected.")
 
@@ -29,7 +25,7 @@ async def main():
 
     worker = Worker(
         client,
-        task_queue="lensora-task-queue",
+    task_queue="assistiq-task-queue",
         workflows=[ValidateTicketWorkflow, FindResolutionWorkflow, PostResolutionWorkflow],
         activities=[
             # Validation Activities

@@ -5,12 +5,13 @@ import asyncio
 from . import routes
 from backend.services.polling_service import polling_service
 # --- FIX: Import the shared state instead of defining it here ---
-from .shared_state import POLLING_LOGS
+from .shared_state import POLLING_LOGS, install_global_log_capture
+import os
 
 app = FastAPI(
-    title="LensOraAI",
-    description="AI-powered integration agent for Oracle ERP and JIRA.",
-    version="0.2.0",
+    title="AssistIQ",
+    description="AssistIQ: Automated L1 Support Agents for JIRA (Validation + Resolution).",
+    version="0.3.0",
 )
 
 app.add_middleware(
@@ -24,12 +25,12 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     print("Application startup: Creating background task for JIRA polling.")
-    # Pass the deque to the polling service so it can add logs
+    # Live log capture removed; only core polling retained
     asyncio.create_task(polling_service.start_polling(POLLING_LOGS))
 
 app.include_router(routes.router)
 
 @app.get("/")
 async def root():
-    return {"message": "LensOraAI is running!"}
+    return {"message": "AssistIQ is running!"}
 

@@ -27,3 +27,5 @@ openai
 pandas
 openpyxl
 python-multipart
+readability-lxml
+beautifulsoup4
